@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_OPEN_PENDANT_NRF5340_CPUAPP
+
+config BT_HCI_IPC
+	default y if BT_HCI
+
+config HEAP_MEM_POOL_ADD_SIZE_BOARD
+	int
+	default 4096 if BT_HCI_IPC
+
+endif
+

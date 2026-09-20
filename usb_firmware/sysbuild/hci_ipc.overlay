@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include "network_partitions.overlay"
+
+/ {
+	chosen {
+		zephyr,code-partition = &s0_partition;
+	};
+};

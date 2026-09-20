@@ -1,0 +1,77 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+def localBuildProperties = new Properties()
+if (rootProject.file('local.properties').isFile()) {
+    rootProject.file('local.properties').withInputStream { localBuildProperties.load(it) }
+}
+def ownerDebugKeystore = localBuildProperties.getProperty('owner.debug.keystore')
+def newDeveloperBuild = project.findProperty('newDeveloperBuild') == 'true'
+if (ownerDebugKeystore && !file(ownerDebugKeystore).isFile()) {
+    throw new GradleException('Configured owner.debug.keystore does not exist. Restore that key; do not replace it for an update.')
+}
+if (!ownerDebugKeystore && !newDeveloperBuild) {
+    throw new GradleException('For a NEW independent debug build pass -PnewDeveloperBuild=true. For an existing app update configure its original owner.debug.keystore in local.properties. Different signing keys cannot update each other.')
+}
+
+android {
+    namespace 'org.openpendant.app'
+    compileSdk 35
+    buildToolsVersion '34.0.0'
+    ndkVersion '30.0.14904198'
+    defaultConfig {
+        applicationId 'org.openpendant.app'
+        minSdk 26
+        targetSdk 35
+        versionCode 67
+        versionName '0.6.49'
+        testInstrumentationRunner 'org.openpendant.app.test.WhisperSmokeInstrumentation'
+        ndk { abiFilters 'arm64-v8a' }
+        externalNativeBuild {
+            cmake {
+                // Use optimized native inference even in the debuggable APK.
+                arguments '-DANDROID_STL=c++_shared', '-DCMAKE_BUILD_TYPE=Release'
+                targets 'openpendant_whisper', 'openpendant_storage', 'openpendant_opus_decode'
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    signingConfigs {
+        debug {
+            if (ownerDebugKeystore) { storeFile file(ownerDebugKeystore) }
+            // Standard Android debug-keystore credentials, not an app secret.
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    buildTypes {
+        debug { debuggable true }
+        release { minifyEnabled false }
+    }
+    testOptions { unitTests.returnDefaultValues = false }
+    lint { abortOnError true }
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '4.2.1'
+        }
+    }
+}
+
+dependencies {
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.0.21'
+    // A download-free local override is useful when the JARs exist but Gradle's
+    // repository metadata was evicted. No dependency copies or global edits.
+    if (project.hasProperty('localJunitJar') && project.hasProperty('localHamcrestJar')) {
+        testImplementation files(project.property('localJunitJar'), project.property('localHamcrestJar'))
+    } else {
+        testImplementation 'junit:junit:4.13.2'
+    }
+}

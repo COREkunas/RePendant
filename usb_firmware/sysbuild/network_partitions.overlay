@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* SDK nRF5340 SMP sample layout: b0n + provision data total 34 KiB,
+ * followed by one 222 KiB network application. No network UICR records.
+ */
+&flash1 {
+	partitions {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		b0n_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "b0n";
+			reg = <0x00000000 0x00008580>;
+		};
+
+		bl_storage: provision_partition: partition@8580 {
+			compatible = "zephyr,mapped-partition";
+			label = "b0-provision-data";
+			reg = <0x00008580 0x00000280>;
+		};
+
+		s0_partition: partition@8800 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-0";
+			reg = <0x00008800 0x00037800>;
+		};
+	};
+};

@@ -1,0 +1,18 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/dts-v1/;
+
+#include <nordic/nrf5340_cpunet_qkaa.dtsi>
+
+/ {
+	model = "Open Limitless Pendant nRF5340 network core";
+	compatible = "openpendant,open-pendant-cpunet";
+
+	chosen {
+		zephyr,bt-hci-ipc = &ipc0;
+		zephyr,sram = &sram1;
+		zephyr,flash = &flash1;
+	};
+};
+
+#include <nordic/nrf5340_shared_sram_partition.dtsi>

@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+		zephyr,boot-mode = &boot_mode0;
+		zephyr,settings-partition = &storage_partition;
+	};
+	aliases {
+		mcuboot-button0 = &pendant_button;
+	};
+};
+
+zephyr_udc0: &usbd {
+	status = "okay";
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};
+
+/* Nordic's GPREGRET retention driver survives a software reset. */
+&gpregret1 {
+	status = "okay";
+	boot_mode0: boot_mode@0 {
+		compatible = "zephyr,retention";
+		status = "okay";
+		reg = <0x0 0x1>;
+	};
+};

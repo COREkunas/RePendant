@@ -1,0 +1,45 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* Share USB, button and GPREGRET boot-mode definitions with the app. */
+#include "../app.overlay"
+#include "app_partitions.overlay"
+
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+	};
+
+	/*
+	 * Nordic's PCD hook reads the simulated flash as image_header/uint32_t
+	 * objects. The driver's default uint8_t BSS array has only byte alignment.
+	 * Use its supported memory-region binding for a page-aligned staging area.
+	 * Zephyr emits this region as NOLOAD: each new SMP upload progressively
+	 * erases the touched pages, and single-slot boot never applies stale RAM.
+	 */
+	network_update_ram: memory@20030000 {
+		compatible = "zephyr,memory-region", "mmio-sram";
+		reg = <0x20030000 0x40000>;
+		zephyr,memory-region = "NET_UPDATE_RAM";
+		status = "okay";
+	};
+
+	soc {
+		/* The SDK's later flash_sim_mcuboot.overlay completes this node. */
+		nordic_ram-flash-controller@0 {
+			memory-region = <&network_update_ram>;
+		};
+	};
+};
+
+/* MCUboot only: 184 KiB working RAM, then 256 KiB update RAM. The app keeps
+ * its full 440 KiB. Neither this range nor staging overlaps PCD/IPC memory.
+ */
+&sram0_offset_for_dfu {
+	reg = <0x2000 0x2e000>;
+	ranges = <0x0 0x2000 0x2e000>;
+};
+
+/* Recovery does not touch microphones, sensor buses or the LED PWM. */
+&pwm0 {
+	status = "disabled";
+};

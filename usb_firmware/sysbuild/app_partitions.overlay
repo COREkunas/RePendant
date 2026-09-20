@@ -1,0 +1,35 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* Both MCUboot and the application use this exact internal-flash layout. */
+/delete-node/ &boot_partition;
+/delete-node/ &slot0_partition;
+/delete-node/ &slot1_partition;
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		boot_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "mcuboot";
+			reg = <0x00000000 0x00020000>;
+		};
+
+		slot0_partition: partition@20000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-0";
+			reg = <0x00020000 0x000d8000>;
+		};
+
+		storage_partition: partition@f8000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x000f8000 0x00008000>;
+		};
+	};
+};
+
+/ {
+	chosen {
+		zephyr,code-partition = &slot0_partition;
+	};
+};

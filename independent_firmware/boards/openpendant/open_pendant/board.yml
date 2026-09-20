@@ -1,0 +1,6 @@
+board:
+  name: open_pendant
+  full_name: Open Limitless Pendant
+  vendor: others
+  socs:
+  - name: nrf5340

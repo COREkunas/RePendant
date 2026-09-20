@@ -1,0 +1,35 @@
+/* Application-only microphone diagnostics. Never included by MCUboot. */
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+/ {
+	/* Zephyr's standard application-owned GPIO property container. */
+	pendant_mic_power: zephyr,user {
+		gpios = <&gpio1 1 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&pinctrl {
+	pendant_pdm_default: pendant-pdm-default {
+		group1 {
+			psels = <NRF_PSEL(PDM_CLK, 0, 4)>, <NRF_PSEL(PDM_DIN, 0, 5)>;
+		};
+	};
+	pendant_pdm_sleep: pendant-pdm-sleep {
+		group1 {
+			psels = <NRF_PSEL(PDM_CLK, 0, 4)>, <NRF_PSEL(PDM_DIN, 0, 5)>;
+			low-power-enable;
+		};
+	};
+};
+
+&pdm0 {
+	status = "okay";
+	pinctrl-0 = <&pendant_pdm_default>;
+	pinctrl-1 = <&pendant_pdm_sleep>;
+	pinctrl-names = "default", "sleep";
+	/* Supported SDK path: 1.280 MHz / ratio 80 = 16 kHz. This is an
+	 * explicit diagnostic clock, not the recovered factory 1.024 MHz. */
+	clock-source = "PCLK32M_HFXO";
+	queue-size = <4>;
+};

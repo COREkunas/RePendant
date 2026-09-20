@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="recovery_waiting_picker">Waiting for the local document picker. No secret is stored in the saved screen state.</string>
+    <string name="recovery_picker_unavailable">A local file picker could not be opened. No recovery key was exported.</string>
+    <string name="recovery_picker_cancelled">Cancelled. No recovery file was read or written.</string>
+    <string name="recovery_picker_unsupported">No supported local document was selected.</string>
+</resources>

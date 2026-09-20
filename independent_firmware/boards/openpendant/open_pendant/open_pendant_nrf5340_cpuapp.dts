@@ -1,0 +1,85 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/dts-v1/;
+
+#include <nordic/nrf5340_cpuapp_qkaa.dtsi>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	model = "Open Limitless Pendant nRF5340 application core";
+	compatible = "openpendant,open-pendant-cpuapp";
+
+	chosen {
+		zephyr,sram = &sram0_image;
+		zephyr,flash = &flash0;
+		zephyr,bt-hci = &bt_hci_ipc0;
+	};
+
+	pendant_buttons: pendant-buttons {
+		compatible = "gpio-keys";
+
+		pendant_button: button {
+			gpios = <&gpio1 5 GPIO_ACTIVE_LOW>;
+			label = "Pendant button";
+		};
+	};
+
+	pendant_pwm_leds: pendant-pwm-leds {
+		compatible = "pwm-leds";
+
+		pendant_red: red {
+			pwms = <&pwm0 0 PWM_USEC(500) PWM_POLARITY_NORMAL>;
+		};
+
+		pendant_green: green {
+			pwms = <&pwm0 1 PWM_USEC(500) PWM_POLARITY_NORMAL>;
+		};
+
+		pendant_blue: blue {
+			pwms = <&pwm0 2 PWM_USEC(500) PWM_POLARITY_NORMAL>;
+		};
+	};
+};
+
+&pinctrl {
+	pendant_pwm_default: pendant_pwm_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 26)>,
+				<NRF_PSEL(PWM_OUT1, 0, 27)>,
+				<NRF_PSEL(PWM_OUT2, 0, 25)>;
+		};
+	};
+
+	pendant_pwm_sleep: pendant_pwm_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 26)>,
+				<NRF_PSEL(PWM_OUT1, 0, 27)>,
+				<NRF_PSEL(PWM_OUT2, 0, 25)>;
+			low-power-enable;
+		};
+	};
+};
+
+&gpiote {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&pwm0 {
+	status = "okay";
+	pinctrl-0 = <&pendant_pwm_default>;
+	pinctrl-1 = <&pendant_pwm_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/* Supplies sram0_image and the shared IPC memory used by HCI IPC. */
+#include <nordic/nrf5340_cpuapp_partition.dtsi>
