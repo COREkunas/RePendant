@@ -20,8 +20,9 @@ apart from text line endings; public signing/build portability stays intact.
   startup passed with microphone off, one old bond retained, valid battery
   samples and zero NAND I/O after boot. No pairing or recording was triggered.
 
-Physical gesture/LED and new-bond durability remain unqualified. The new APK is
-built but phone installation is pending. Existing downloadable release binaries
+Physical gesture/LED and new-bond durability remain unqualified. Android 0.6.52
+was installed with the verified original signer and without clearing app data.
+Existing downloadable release binaries
 and tags remain at firmware 0.4.57 / Android 0.6.49. See
 [pairing details](BUTTON_PAIRING.md) and [battery limits](GAUGE_RECOVERY.md).
 

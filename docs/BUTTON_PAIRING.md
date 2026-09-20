@@ -61,5 +61,6 @@ into recording commands. Five taps during recording do not stop it or re-pair.
 
 Physical five-tap/LED observation, real replacement pairing and reboot/reconnect
 durability are **not yet qualified**. Host fakes do not prove radio behavior,
-flash durability or electrical timing. The phone was not USB-connected when the
-companion APK was built, so new-app installation is tracked separately.
+flash durability or electrical timing. Android 0.6.52 was installed after the
+phone reconnected, with the original signer and without uninstalling or clearing
+app data. Real replacement pairing remains pending.

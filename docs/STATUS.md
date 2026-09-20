@@ -6,7 +6,7 @@ ready. Results below refer to the owner's test pendant, not all PCB revisions.
 | Area | Evidence / current boundary |
 | --- | --- |
 | Firmware | 0.4.60-button-pairing installed; healthy idle startup with previous bond retained; also includes bounded calibration settling and deferred USB recovery |
-| Android | 0.6.52, versionCode 70 built; 634 JVM tests passed; lint 0 errors / 14 existing warnings; phone installation pending |
+| Android | 0.6.52, versionCode 70 installed with original signer and app data retained; 634 JVM tests passed; lint 0 errors / 14 existing warnings |
 | Microphone | Intelligible mono PDM audio; five-minute real-mic recording/save/phone-transfer tests, including a battery interval |
 | Button | Start/stop without per-recording app approval after enrollment; standby wake and battery recording tested |
 | Five-tap pairing | New idle-only bond replacement, blue blink and 60-second window pass offline tests; physical gesture/new-bond durability pending; USB still needed to read the passkey |
