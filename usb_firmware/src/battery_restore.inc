@@ -93,6 +93,20 @@ static int restore_status_valid(uint16_t s)
 {/* INITCOMP, no shutdown/watchdog/calibration/reserved/chemistry transition. */
  return (s&0x0080U)!=0 && (s&0xdc61U)==0;
 }
+static int restore_settled_status(struct restore_actor *a,uint16_t *s)
+{
+ /* TI SLUUCD5B table5-3: CCA is automatic offset calibration, not a latched
+  * fault. Observe it finishing before admission/configuration. ONLY CCA may
+  * defer this read; BCA/CALMODE/reset/shutdown/identity/transport failures
+  * remain terminal. Up to16 successful observations (64s at fixed pacing),
+  * still within the actor's170s total budget. No write/failed-I/O replay. */
+ for(unsigned n=0;n<16;++n){
+  int rc=restore_query(a,0,s);if(rc)return rc;
+  if(restore_status_valid(*s))return 0;
+  if(!(*s&0x0800U)||!restore_status_valid((uint16_t)(*s&~0x0800U)))return -EPERM;
+ }
+ return -ETIMEDOUT;
+}
 static int restore_flags_valid(uint16_t f,int initializing)
 {return (f&8U)!=0 && !(f&0xfc10U) && (initializing || !(f&0x20U));}
 static int restore_sequence(struct restore_actor *a)
@@ -104,7 +118,7 @@ static int restore_sequence(struct restore_actor *a)
  BR_DO(restore_query(a,1,&r->device_type));BR_NEED(r->device_type==0x0427);
  BR_DO(restore_query(a,2,&r->fw_version));BR_NEED(r->fw_version==0x0202);
  BR_DO(restore_query(a,8,&r->chem_before));BR_NEED(r->chem_before==0x3230);
- BR_DO(restore_query(a,0,&r->status_before));BR_NEED(restore_status_valid(r->status_before));
+ BR_DO(restore_settled_status(a,&r->status_before));
  BR_DO(restore_read(a,6,&r->flags_before));BR_NEED(restore_flags_valid(r->flags_before,1));
  BR_DO(restore_read(a,4,&r->voltage_before));
  BR_NEED(r->voltage_before>=3500 && r->voltage_before<=4450);
@@ -114,7 +128,7 @@ static int restore_sequence(struct restore_actor *a)
  if(r->status_before&0x2000U){
   BR_DO(restore_control(a,0x8000));BR_DO(restore_control(a,0x8000));
  }
- BR_DO(restore_query(a,0,&value));BR_NEED(!(value&0x2000U)&&restore_status_valid(value));
+ BR_DO(restore_settled_status(a,&value));BR_NEED(!(value&0x2000U));
  r->phase=3;
  BR_DO(restore_control(a,0x13));BR_DO(restore_read(a,6,&value));
  BR_NEED((value&0x18U)==0x18U && !(value&0xfc00U));
@@ -147,7 +161,7 @@ static int restore_sequence(struct restore_actor *a)
  /* BAT_DET was already set and must remain set. Do not replay BAT_INSERT on
   * an already inserted battery and needlessly restart learning. */
  r->phase=7;BR_DO(restore_control(a,0x20));
- BR_DO(restore_query(a,0,&r->status_after));
+ BR_DO(restore_settled_status(a,&r->status_after));
  BR_NEED((r->status_after&0x2000U) && restore_status_valid(r->status_after));
  r->phase=8;BR_DO(restore_query(a,8,&r->chem_after));BR_NEED(r->chem_after==r->chem_before);
  BR_DO(restore_read(a,6,&r->flags_after));BR_NEED(restore_flags_valid(r->flags_after,0));

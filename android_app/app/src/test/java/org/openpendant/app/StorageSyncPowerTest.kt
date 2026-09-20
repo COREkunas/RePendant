@@ -32,4 +32,21 @@ class StorageSyncPowerTest {
         assertNull(refusal(unopened))
         assertEquals(StorageSyncPower.USB_REQUIRED,refusal(unopened.copy(recorder=recorder.copy(flags=2+512))))
     }
+    @Test fun usbFallbackDoesNotPromiseBatterySyncWithStoppedOrMissingMonitor() {
+        for(b in listOf(null,BatteryTelemetry(4,null,null,null,0,0,0),BatteryTelemetry(12,null,null,null,0,0,0))) {
+            val sample=TimedDeviceTelemetry(idle.copy(battery=b),1000)
+            assertNull(StorageSyncPower.refusal(sample,true,1001,32479))
+            assertEquals("Ready on USB. Keep the pendant USB connected during sync.",
+                StorageSyncPower.readyMessage(sample,true,1001,32479))
+        }
+    }
+    @Test fun batteryReadinessAndFailuresHaveHonestMessages() {
+        val b=BatteryTelemetry(7,90,4100,2981,1000,1,8)
+        val sample=TimedDeviceTelemetry(idle.copy(battery=b),1000)
+        assertTrue(StorageSyncPower.readyMessage(sample,true,1001,32479).startsWith("Ready on battery"))
+        assertFalse(StorageSyncPower.readyMessage(sample,true,11001,32479).startsWith("Ready"))
+        val failed=sample.copy(value=sample.value.copy(recorder=recorder.copy(flags=recorder.flags and 1.inv()),
+            battery=BatteryTelemetry(12,null,null,null,0,0,0)))
+        assertEquals("Battery monitor needs attention. Connect pendant USB to sync.",StorageSyncPower.refusal(failed,true,1001,32479))
+    }
 }

@@ -18,4 +18,10 @@ bool pendant_ble_authorized(struct bt_conn *conn);
  * flags under this function's lock, closing the two-way admission race. */
 bool pendant_ble_pairing_busy(void);
 
+/* Trusted physical-gesture path only. Replaces Bluetooth bonds, never recording
+ * keys or NAND. Native L4/passkey policy stays unchanged. Not a remote command. */
+int pendant_ble_pairing_replace_local(void);
+/* Cached window time only; no passkey, settings or radio operations. */
+unsigned int pendant_ble_pairing_remaining_ms(void);
+
 #endif

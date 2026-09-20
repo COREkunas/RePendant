@@ -99,3 +99,32 @@ recipe here. Read [FIRST_FLASH.md](FIRST_FLASH.md).
 The public export changes only build portability/documentation around the
 preserved application sources. Rebuilding signatures is not byte-identical
 reproduction of the downloaded, maintainer-signed binaries.
+
+## Offline battery protocol regression
+
+With Python and an installed Windows MSVC x64 toolchain / Windows SDK, run from
+the repository root:
+
+```console
+python tools/test_battery_probe.py
+```
+
+This compiles the production battery probe with mocked registers and time. It
+checks calibration settling, bounded failure/cancellation and deferred gauge
+initialization without connecting to a device. It is not electrical or runtime
+power-consumption qualification. Android JVM tests above cover the companion
+readiness and sync-message changes.
+
+## Offline pairing and recording-control regression
+
+With the same Windows/MSVC prerequisites:
+
+```console
+python tools/test_ble_security.py
+python tools/test_long_control_ble.py --portable
+```
+
+These compile the production security, gesture decoder and control/broker code
+with fake Bluetooth/time adapters. They do not pair, erase, record, or connect to
+hardware. See [the pairing guide](BUTTON_PAIRING.md) for the remaining physical
+qualification and secure passkey requirements.

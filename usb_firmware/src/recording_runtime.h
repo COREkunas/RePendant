@@ -46,6 +46,11 @@ int recording_runtime_standby(int requested);
 int recording_runtime_preferences_claim(void);
 int recording_runtime_preferences_ready(void);
 void recording_runtime_preferences_release(void);
+/* Security actor first publishes pairing-busy, then claims idle/power gates.
+ * Does not hold controller metadata lock over Bluetooth callbacks or NVS I/O. */
+int recording_runtime_pairing_claim(void);
+int recording_runtime_pairing_ready(void);
+void recording_runtime_pairing_release(void);
 /* Bounded cached-only snapshot. Never mounts, initializes, reads NAND, starts
  * audio, changes settings, or waits for a lock. Safe from BLE receive context. */
 void recording_runtime_telemetry(struct recorder_telemetry *);

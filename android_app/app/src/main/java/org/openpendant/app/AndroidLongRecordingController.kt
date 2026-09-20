@@ -69,9 +69,9 @@ internal class AndroidLongRecordingController(context: Context,private val clien
         check(Looper.myLooper()===main.looper)
         if(client.preferencesSave.busy){message="Wait for pendant settings to finish saving.";changed();return}
         if(!visible.get()||!working.compareAndSet(false,true))return
-        if(action in setOf(Action.START,Action.ARM) && client.telemetry?.value?.battery?.portable==true &&
-            client.telemetry?.freshBattery(SystemClock.elapsedRealtime(),client.connected)?.startPowerReady!=true){
-            working.set(false);message="A fresh, sufficient battery reading is needed. Refresh device status before starting; nothing was sent.";changed();return
+        val powerBlock=RecordingPowerStatus.blocked(client.telemetry,SystemClock.elapsedRealtime(),client.connected)
+        if(action in setOf(Action.START,Action.ARM) && powerBlock!=null){
+            working.set(false);message="$powerBlock. Nothing was sent.";changed();return
         }
         val selected=client.longPeer()
         if(selected==null){

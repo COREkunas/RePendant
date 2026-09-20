@@ -4,7 +4,7 @@ package org.openpendant.app
  * Battery settings is qualified separately from firmware56's battery transfer. */
 internal object DeviceSettingsPower {
     fun batterySupported(sample:TimedDeviceTelemetry?,bits:Long) =
-        sample?.value?.firmware=="0.4.57" && StorageSyncPower.supported(bits)
+        sample?.value?.firmware in setOf("0.4.57", "0.4.58", "0.4.59", "0.4.60") && StorageSyncPower.supported(bits)
     fun refusal(sample:TimedDeviceTelemetry?,connected:Boolean,now:Long,bits:Long):String? {
         if(!connected)return "Connect securely to save settings."
         if(sample==null||!sample.fresh(now,true))return "Waiting for fresh pendant status before saving."

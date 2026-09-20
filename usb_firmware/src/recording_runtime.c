@@ -1224,6 +1224,7 @@ static int maintenance_idle(void)
 static int diagnostics_idle(void)
 {return atomic_get(&usb_configured)&&maintenance_idle();}
 static atomic_t preferences_owned;
+static atomic_t pairing_owned;
 static int preferences_power_ready(void)
 {
 #ifdef OPENPENDANT_BATTERY_SYNC
@@ -1236,6 +1237,32 @@ static int preferences_power_ready(void)
 int recording_runtime_preferences_ready(void)
 {return atomic_get(&preferences_owned)&&preferences_power_ready()&&
  !atomic_get(&faulted)&&!pendant_recovery_is_pending()&&!pendant_ble_pairing_busy();}
+int recording_runtime_pairing_claim(void)
+{
+ /* Pairing-busy is already published by the trusted security actor. Check
+  * every other idle fence, including a not-yet-started local/remote command. */
+ if(!pendant_ble_pairing_busy()||!atomic_cas(&command_busy,0,1))return -EBUSY;
+ int ok=atomic_get(&ready)&&!atomic_get(&capacity_used)&&!atomic_get(&trial_used)&&
+  !atomic_get(&recovery_used)&&!atomic_get(&faulted)&&!atomic_get(&leased)&&
+  !atomic_get(&recording)&&!atomic_get(&storage_running)&&!atomic_get(&catalog_epoch)&&
+  !atomic_get(&retire_pending)&&!atomic_get(&sync_actor)&&!guards[0]&&!guards[1]&&!enrollment.active&&
+  !atomic_get(&control_probe_running)&&!atomic_get(&phy_probe_running)&&!atomic_get(&preimage_running)&&
+  !atomic_get(&recovery_running)&&!atomic_get(&trial_running)&&!atomic_get(&capacity_running)&&
+  !mic_commands_busy()&&!pendant_recovery_is_pending()&&preferences_power_ready();
+#ifdef OPENPENDANT_LONG_CONTROL
+ if(ok&&atomic_load(&long_bound)){
+  ok=lrc_maintenance_claim(&long_control);
+  if(ok)lrc_maintenance_release(&long_control);
+ }
+#endif
+ if(!ok){atomic_clear(&command_busy);return -EBUSY;}
+ atomic_set(&pairing_owned,1);return 0;
+}
+void recording_runtime_pairing_release(void)
+{if(atomic_cas(&pairing_owned,1,0))atomic_clear(&command_busy);}
+int recording_runtime_pairing_ready(void)
+{return atomic_get(&pairing_owned)&&atomic_get(&command_busy)&&preferences_power_ready()&&
+ !atomic_get(&faulted)&&!mic_commands_busy()&&!pendant_recovery_is_pending()&&pendant_ble_pairing_busy();}
 int recording_runtime_preferences_claim(void)
 {
  if(!atomic_cas(&command_busy,0,1))return -EBUSY;

@@ -68,6 +68,11 @@ class DashboardReadingsTest {
     @Test fun armingIsNotRecording() {
         assertEquals("Ready for your button tap",recording(observation(LongRecordingControlCodec.Phase.STARTING,LongRecordingControlCodec.BUTTON_ARMED)))
     }
+    @Test fun observedIdleCannotHideFailedBatteryMonitor() {
+        val t=TimedDeviceTelemetry(device().copy(battery=BatteryTelemetry(12,null,null,null,0,0,0)),1000)
+        assertEquals("Battery monitor needs attention",recording(observation(LongRecordingControlCodec.Phase.IDLE),value=t))
+        assertEquals("Recording · 5:00",recording(observation(LongRecordingControlCodec.Phase.RUNNING),value=t))
+    }
     @Test fun unknownOrRebootedOutcomeOverridesAnOldIdleReading() {
         assertEquals("Check recording status",recording(LongRecordingObservation(LongRecordingOutcome.UNKNOWN,null)))
         assertEquals("Restarted · check recovery",recording(LongRecordingObservation(LongRecordingOutcome.BOOT_CHANGED,null)))

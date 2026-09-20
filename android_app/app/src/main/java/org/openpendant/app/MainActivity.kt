@@ -361,7 +361,7 @@ class MainActivity : Activity(), PendantClient.Listener {
             player.stop()
             if (client.connected) client.disconnect() else client.connect()
         }; connection.addView(connect)
-        pairingHelpButton = button("First-time pairing help") { pairingHelp(false) }; connection.addView(pairingHelpButton)
+        pairingHelpButton = button("Pairing help") { pairingHelp(false) }; connection.addView(pairingHelpButton)
 
         longCard.addView(eyebrow("Record on pendant"))
         captureValue=label("Connect to check",21f,bold=true).apply { accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -556,7 +556,8 @@ class MainActivity : Activity(), PendantClient.Listener {
             "\n${if(longFresh)"" else "Last observed: "}captured ${clockText(it.accepted)} · stored ${clockText(it.committed)}"
         }?:"")
         val canLong=client.longPeer()!=null&&!client.preferencesSave.busy&&!longControl.busy&&!durableLibrary.busy&&!client.recording&&!transcriptState.busy&&!importingModel
-        longStart.isEnabled=canLong&&!longControl.activeRecording&&longObservation?.outcome!=LongRecordingOutcome.BOOT_CHANGED
+        val powerBlock=RecordingPowerStatus.blocked(client.telemetry,android.os.SystemClock.elapsedRealtime(),client.connected)
+        longStart.isEnabled=canLong&&powerBlock==null&&!longControl.activeRecording&&longObservation?.outcome!=LongRecordingOutcome.BOOT_CHANGED
         longArm.isEnabled=longStart.isEnabled
         longStop.isEnabled=canLong&&longControl.activeRecording
         longCheck.isEnabled=canLong
@@ -576,9 +577,12 @@ class MainActivity : Activity(), PendantClient.Listener {
             longObservation?.outcome in setOf(LongRecordingOutcome.UNKNOWN, LongRecordingOutcome.BOOT_CHANGED) -> longControl.message
             longControl.message.startsWith("A fresh,") -> "Refresh the battery reading before starting."
             !client.connected -> "Connect above to see whether the pendant is recording."
+            powerBlock!=null&&!longControl.activeRecording -> powerBlock
             longControl.busy -> "Checking with your pendant…"
             longState?.has(LongRecordingControlCodec.BUTTON_ARMED) == true && longFresh -> "Tap once within two minutes to start. Tap again to stop; don't hold."
             longState?.phase == LongRecordingControlCodec.Phase.STOPPED && now-longControl.observedAt in 0..10_000 -> "Sync in Recordings to save a phone copy."
+            client.longPeer()?.let { it.capabilityBits and LongRecordingControlCodec.STANDALONE_CAPABILITY != 0L } == true ->
+                "Short tap: start / stop. On firmware 0.4.60, wait briefly after one tap; five quick taps while idle replace phone pairing. Do not hold."
             else -> "Keeps recording without your phone."
         }
         securityStatus.stableText = if (durableLibrary.state.recipientReady) "Recovery backup verified"
@@ -665,7 +669,6 @@ class MainActivity : Activity(), PendantClient.Listener {
             longObservation?.outcome in setOf(LongRecordingOutcome.UNKNOWN,LongRecordingOutcome.BOOT_CHANGED) ||
             remoteRecording && !longControl.activeRecording)) View.VISIBLE else View.GONE
         if (remoteRecording && !longControl.activeRecording) recordingHint.stableText = "Check recording status to load Stop and save."
-        else if(standaloneButton&&!longControl.activeRecording)recordingHint.stableText="Short tap: start / stop. Works on battery without the app. Do not hold the button."
         cancel.isEnabled = client.recording && !client.cancelling
         progress.visibility = if (client.recording) View.VISIBLE else View.GONE; progress.progress = client.progress
         librarySummary.stableText = libraryError ?: "${rows.count { RecordingListPresentation.matches(it, RecordingListFilter.ALL) }} recordings · stored privately"
@@ -897,14 +900,16 @@ class MainActivity : Activity(), PendantClient.Listener {
     }
 
     private fun pairingHelp(startPair: Boolean) {
-        val text = "First pairing requires physical USB access to the pendant.\n\n" +
-            "1. Open the pendant's 60-second pairing window from its USB controls.\n" +
+        val text = "Pairing still needs USB access to read the secure six-digit code. Normal use does not need USB.\n\n" +
+            "If this phone was paired before, disconnect in the app and use Android Bluetooth settings to Forget its old pendant pairing first. Then scan and select the pendant again.\n\n" +
+            "1. On firmware 0.4.60, press the pendant button five times quickly while idle (within 3.5 seconds, less than half a second between taps). A blue blink marks its 60-second pairing window. This removes the old phone pairing, not recordings or recovery keys. Older firmware uses USB controls.\n" +
             "2. Tap Pair here to start Android's native pairing dialog.\n" +
             "3. Read the fresh six-digit passkey from pendant USB status, then enter it in Android.\n\n" +
             "Expect a six-digit passkey ENTRY dialog. Cancel any passkey-free or 'confirm matching number' prompt. " +
             "The app never enters a code for you. Once paired, tap Connect. " +
-            "The pendant remembers the bond; normal use does not need USB."
-        val dialog = AlertDialog.Builder(this).setTitle("Secure first-time pairing").setMessage(text)
+            "The pendant remembers the new bond. If the window expires, the old bond stays removed; five quick taps opens another window. " +
+            "A different phone needs your recording recovery backup to read existing encrypted recordings."
+        val dialog = AlertDialog.Builder(this).setTitle("Secure pairing").setMessage(text)
         if (startPair) dialog.setNegativeButton("Not ready", null).setPositiveButton("Open Android pairing") { _, _ -> client.pair() }
         else dialog.setPositiveButton("Got it", null)
         dialog.show()

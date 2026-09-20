@@ -14,9 +14,16 @@
 #include <zephyr/sys/util.h>
 #include "ble_security.h"
 #include "mic_commands.h"
+#ifdef OPENPENDANT_LONG_CONTROL
+/* Small maintenance interface; avoid importing recorder internals here. */
+int recording_runtime_pairing_claim(void);
+int recording_runtime_pairing_ready(void);
+void recording_runtime_pairing_release(void);
+#endif
 
-/* Only the native settings backend writes bond metadata. No keys, arbitrary
- * flash addresses, key-export commands, forced repair or unpair API here.
+/* Only the native settings backend writes bond metadata. No key export or
+ * arbitrary flash addresses. Explicit physical replacement uses bt_unpair;
+ * USB/remote commands cannot replace the owner.
  * The existing 32 KiB storage partition is selected in the application DTS.
  */
 BUILD_ASSERT(IS_ENABLED(CONFIG_BT_SMP_SC_ONLY));
@@ -69,6 +76,7 @@ static int64_t window_deadline;
 static struct bt_conn *pending;
 static bool code_valid;
 static volatile uint32_t displayed_code;
+static atomic_t replacement_result;
 static void expire_window(struct k_work *work);
 K_WORK_DELAYABLE_DEFINE(expiry_work, expire_window);
 
@@ -100,6 +108,14 @@ bool pendant_ble_pairing_busy(void)
 	bool busy = window_open || pending != NULL || closing;
 	k_spin_unlock(&enrollment_lock, key);
 	return busy;
+}
+
+unsigned int pendant_ble_pairing_remaining_ms(void)
+{
+	k_spinlock_key_t key=k_spin_lock(&enrollment_lock);
+	int64_t left=window_open&&!closing?window_deadline-k_uptime_get():0;
+	k_spin_unlock(&enrollment_lock,key);
+	return left>0?(unsigned int)left:0;
 }
 
 bool pendant_ble_authorized(struct bt_conn *conn)
@@ -354,6 +370,67 @@ int pendant_ble_security_init(void)
 	return err;
 }
 
+#ifdef OPENPENDANT_LONG_CONTROL
+static int count_saved_bond(const char *name,size_t len,settings_read_cb reader,
+			    void *arg,void *user)
+{
+	/* Enumerate metadata only. Never request/read/log any secret bond bytes. */
+	ARG_UNUSED(name);ARG_UNUSED(reader);ARG_UNUSED(arg);
+	if(len)(*(unsigned int *)user)++;
+	return 0;
+}
+#endif
+
+int pendant_ble_pairing_replace_local(void)
+{
+#ifndef OPENPENDANT_LONG_CONTROL
+	return -ENOTSUP;
+#else
+	if(atomic_get(&init_result)!=0)return -EACCES;
+	k_spinlock_key_t key=k_spin_lock(&enrollment_lock);
+	if(window_open||pending||closing||mic_commands_busy()||pendant_recovery_is_pending()){
+		k_spin_unlock(&enrollment_lock,key);return -EBUSY;
+	}
+	/* Publish refusal before claiming the recorder gate. This two-way barrier
+	 * excludes new mic/storage work and authorization while old links retire. */
+	closing=true;
+	k_spin_unlock(&enrollment_lock,key);
+	int rc=recording_runtime_pairing_claim();
+	if(rc){
+		key=k_spin_lock(&enrollment_lock);closing=false;atomic_set(&replacement_result,rc);
+		k_spin_unlock(&enrollment_lock,key);return rc;
+	}
+	/* Zephyr disconnects the old peer and deletes only native BT metadata.
+	 * Its return does NOT report every settings deletion failure, so verify
+	 * both RAM and persistent key-entry absence before opening enrollment. */
+	if(!recording_runtime_pairing_ready()){
+		key=k_spin_lock(&enrollment_lock);closing=false;atomic_set(&replacement_result,-EPERM);
+		k_spin_unlock(&enrollment_lock,key);recording_runtime_pairing_release();return -EPERM;
+	}
+	rc=bt_unpair(BT_ID_DEFAULT,NULL);
+	unsigned int saved=0;
+	if(!rc)rc=settings_load_subtree_direct("bt/keys",count_saved_bond,&saved);
+	if(!rc&&(saved||bond_count()))rc=-EIO;
+	key=k_spin_lock(&enrollment_lock);
+	if(!rc){
+		atomic_set(&owners,0);
+		window_open=true;window_deadline=k_uptime_get()+PAIRING_WINDOW_MS;
+		code_valid=false;displayed_code=0;
+		rc=k_work_reschedule(&expiry_work,K_MSEC(PAIRING_WINDOW_MS));
+		if(rc>=0)rc=0;
+	}
+	if(rc){
+		/* Ambiguous deletion/scheduling is terminal for this boot. Never
+		 * automatically repeat a destructive operation or trust an old key. */
+		atomic_set(&init_result,rc);window_open=false;window_deadline=0;
+	}
+	atomic_set(&replacement_result,rc);closing=false;
+	k_spin_unlock(&enrollment_lock,key);
+	recording_runtime_pairing_release();
+	return rc;
+#endif
+}
+
 static int command_open(const struct shell *sh, size_t argc, char **argv)
 {
 	if (sh != shell_backend_uart_get_ptr() || argc != 2 ||
@@ -411,9 +488,19 @@ static int command_close(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int command_replacement(const struct shell *sh,size_t argc,char **argv)
+{
+	ARG_UNUSED(argv);
+	if(sh!=shell_backend_uart_get_ptr()||argc!=1)return -EINVAL;
+	/* Separate cached diagnostic keeps existing status/recovery parsers intact. */
+	shell_print(sh,"PAIRING_REPLACEMENT rc=%d; physical five-tap only",(int)atomic_get(&replacement_result));
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(pairing_subcommands,
 	SHELL_CMD_ARG(open, NULL, "Open one local 60-second pairing window: open confirm", command_open, 2, 0),
 	SHELL_CMD_ARG(status, NULL, "Show pairing state and active passkey locally", command_status, 1, 0),
 	SHELL_CMD_ARG(close, NULL, "Cancel pairing without deleting an existing bond", command_close, 1, 0),
+	SHELL_CMD_ARG(replacement, NULL, "Read last physical replacement result; no changes", command_replacement, 1, 0),
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_REGISTER(pairing, &pairing_subcommands, "Local authenticated phone enrollment", NULL);

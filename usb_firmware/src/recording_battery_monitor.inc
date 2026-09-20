@@ -1,8 +1,12 @@
-/* Once-boot, read-only actor. The portable profile starts it automatically
- * only after runtime/control binding and exclusive idle admission. Other
- * profiles remain explicit. Neither path configures the gauge or starts audio. */
+/* Single service actor. Verified gauge POR may restore factory configuration
+ * with stable USB and exclusive idle admission. If USB is absent, release
+ * external owners and defer BEFORE recovery I/O. Never start audio or retry
+ * uncertain transfers/configuration writes. */
 static struct bp_sample watch_sample;
 static atomic_t watch_requested,watch_initialized,watch_done,watch_cancel,watch_error;
+#ifdef OPENPENDANT_GAUGE_POR_RECOVERY
+static atomic_t watch_deferred;
+#endif
 static uint32_t watch_samples,watch_usb_samples,watch_battery_samples;
 static uint16_t watch_min_mv,watch_max_mv;
 static int watch_init_allowed(void *);
@@ -89,12 +93,28 @@ static int watch_restore_allowed(void *user)
  }
  irq_unlock(key);return ok;
 }
+static int watch_resume_claim(void)
+{
+ if(!atomic_get(&watch_deferred)||atomic_get(&watch_done)||atomic_get(&watch_cancel)||
+    !atomic_get(&usb_configured)||battery_restore.attempted||
+    atomic_get(&capacity_used)||atomic_get(&trial_used)||atomic_get(&recovery_used)||
+    !atomic_cas(&command_busy,0,1))return 0;
+ if(!battery_control_lock()){atomic_clear(&command_busy);return 0;}
+ if(!watch_init_allowed(NULL)||enrollment.active||pendant_button_read()!=0||mic_commands_reserve_external()){
+  battery_control_unlock();atomic_clear(&command_busy);return 0;
+ }
+ /* No reader may copy service_initial while resumed initialization writes it. */
+ atomic_clear(&watch_initialized);return 1;
+}
 #endif
 static int watch_initialize(void)
 {
 #ifdef OPENPENDANT_GAUGE_POR_RECOVERY
  struct watch_repair_gate g={0};
- int rc=battery_service_init_recover(watch_init_allowed,watch_restore_allowed,&g,&battery_restore);
+ int rc=atomic_get(&watch_deferred)?
+  battery_service_resume_recover(watch_init_allowed,watch_restore_allowed,&g,&battery_restore):
+  battery_service_init_recover(watch_init_allowed,watch_restore_allowed,&g,&battery_restore);
+ atomic_set(&watch_deferred,rc==-EAGAIN);
 #else
  int rc=battery_service_init(watch_init_allowed,NULL);
 #endif
@@ -103,7 +123,11 @@ static int watch_initialize(void)
  else atomic_set(&faulted,1);
  battery_control_unlock();atomic_clear(&command_busy);
  atomic_set(&watch_error,rc);atomic_set(&watch_initialized,1);
- if(rc)atomic_set(&watch_done,1);
+ if(rc
+#ifdef OPENPENDANT_GAUGE_POR_RECOVERY
+    &&rc!=-EAGAIN
+#endif
+ )atomic_set(&watch_done,1);
  return rc;
 }
 static int watch_poll(void)
@@ -128,7 +152,20 @@ static void battery_watch_thread(void *a,void *b,void *c)
 #endif
   k_msleep(250);
  }
- if(watch_initialize())return;
+ int rc=watch_initialize();
+#ifdef OPENPENDANT_GAUGE_POR_RECOVERY
+ while(rc==-EAGAIN){
+  /* Idle wait performs no gauge/NAND I/O and holds no command/mic owner. */
+  while(!watch_resume_claim()){
+   if(atomic_get(&watch_cancel)||atomic_get(&faulted)||pendant_recovery_is_pending()){
+    atomic_set(&watch_error,-ECANCELED);atomic_set(&watch_done,1);return;
+   }
+   k_msleep(250);
+  }
+  rc=watch_initialize();
+ }
+#endif
+ if(rc)return;
  while(!watch_poll())k_msleep(250);
 }
 /* Outrank codec/command10 and storage12 so a mount cannot starve the bounded

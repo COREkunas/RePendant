@@ -1,15 +1,22 @@
 /* Serialized by a single service actor; used=2 excludes the old diagnostics.
  * Existing fixed HAL/2-second pacing/STOP rules are reused unchanged. */
-static uint32_t service_ready,service_sequence;
+static uint32_t service_ready,service_sequence,service_deferred;
 static struct battery_service_init_result service_initial;
 void battery_service_init_status(struct battery_service_init_result *out)
 {if(out)*out=service_initial;}
 int battery_service_released(void){return stopped&&released&&!fault&&idle();}
 int battery_service_claimed(void){return atomic_get(&used)==2;}
 static int service_initialize(int (*allow)(void*),int (*restore_allow)(void*),
-                              void *user,struct battery_restore_result *recovered)
+                              void *user,struct battery_restore_result *recovered,int resume)
 {
- if(!allow||!atomic_cas(&used,0,2))return -EPERM;
+ if(!allow)return -EPERM;
+ if(resume){
+  /* Only a verified POR deferred BEFORE recovery I/O may resume. Transport,
+   * ownership, identity and partial-write failures never create this token. */
+  if(!service_deferred||atomic_get(&used)!=2||!battery_service_released()||
+     !recovered||recovered->attempted)return -EPERM;
+  service_deferred=0;
+ }else if(!atomic_cas(&used,0,2))return -EPERM;
  struct battery_restore_result r={0};struct restore_actor a={&r,allow,user,k_uptime_get()};
  int rc=-EPERM;service_initial=(struct battery_service_init_result){.attempted=1,.stage=1};
  service_initial.stage=2;
@@ -22,7 +29,7 @@ static int service_initialize(int (*allow)(void*),int (*restore_allow)(void*),
  BS_READ(3,1,restore_query(&a,1,&service_initial.type),service_initial.type==0x427);
  BS_READ(4,2,restore_query(&a,2,&service_initial.fw),service_initial.fw==0x202);
  BS_READ(5,4,restore_query(&a,8,&service_initial.chem),service_initial.chem==0x3230);
- BS_READ(6,8,restore_query(&a,0,&service_initial.status),
+ BS_READ(6,8,restore_settled_status(&a,&service_initial.status),
          restore_status_valid(service_initial.status)&&(restore_allow||(service_initial.status&0x2000)));
  BS_READ(7,16,restore_read(&a,6,&service_initial.flags),restore_flags_valid(service_initial.flags,restore_allow!=NULL));
 #undef BS_READ
@@ -30,7 +37,10 @@ static int service_initialize(int (*allow)(void*),int (*restore_allow)(void*),
   /* An unsealed gauge alone is NOT evidence of reset. No blind resealing,
    * resetting, configuration of an unknown part, or admission on defaults. */
   rc=-EPERM;
-  if(!restore_allow||!recovered||!(service_initial.flags&0x20)||!restore_allow(user))goto done;
+  if(!restore_allow||!recovered||!(service_initial.flags&0x20))goto done;
+  if(!restore_allow(user)){
+   service_deferred=1;rc=-EAGAIN;goto done;
+  }
   service_initial.stage=9;memset(recovered,0,sizeof(*recovered));recovered->attempted=1;
   struct restore_actor repair={recovered,restore_allow,user,k_uptime_get()};
   rc=restore_sequence(&repair);
@@ -47,12 +57,18 @@ done:
  return rc;
 }
 int battery_service_init(int (*allow)(void*),void *user)
-{return service_initialize(allow,NULL,user,NULL);}
+{return service_initialize(allow,NULL,user,NULL,0);}
 int battery_service_init_recover(int (*allow)(void*),int (*restore_allow)(void*),
                                 void *user,struct battery_restore_result *recovered)
 {
  if(!restore_allow||!recovered)return -EINVAL;
- return service_initialize(allow,restore_allow,user,recovered);
+ return service_initialize(allow,restore_allow,user,recovered,0);
+}
+int battery_service_resume_recover(int (*allow)(void*),int (*restore_allow)(void*),
+                                  void *user,struct battery_restore_result *recovered)
+{
+ if(!restore_allow||!recovered)return -EINVAL;
+ return service_initialize(allow,restore_allow,user,recovered,1);
 }
 int battery_service_read(struct bp_sample *out,int (*allow)(void*),void *user)
 {

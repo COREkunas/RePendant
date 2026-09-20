@@ -58,6 +58,12 @@ void battery_service_init_status(struct battery_service_init_result*);
  * Initial evidence keeps pre-recovery values; stage9 identifies recovery. */
 int battery_service_init_recover(int (*allow)(void*),int (*restore_allow)(void*),
                                 void*,struct battery_restore_result*);
+/* -EAGAIN from init_recover means verified POR, no recovery I/O attempted.
+ * After releasing/reacquiring all external owners and obtaining USB admission,
+ * the same service actor may resume; identity/state are read again first.
+ * No other failure is resumable. Cache publication must exclude in-flight init. */
+int battery_service_resume_recover(int (*allow)(void*),int (*restore_allow)(void*),
+                                  void*,struct battery_restore_result*);
 int battery_service_read(struct bp_sample*,int (*allow)(void*),void*);
 /* Only the service actor calls released(), after a completed API call. */
 int battery_service_released(void);

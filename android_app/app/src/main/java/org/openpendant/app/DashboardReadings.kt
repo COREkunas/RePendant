@@ -42,7 +42,7 @@ internal data class DashboardReadings(val battery: String, val led: String, val 
             if (fresh && state != null) {
                 if (state.has(LongRecordingControlCodec.BUTTON_ARMED)) return "Ready for your button tap"
                 return when (state.phase) {
-                    LongRecordingControlCodec.Phase.IDLE -> "Ready to record"
+                    LongRecordingControlCodec.Phase.IDLE -> RecordingPowerStatus.blocked(timed, now, connected) ?: "Ready to record"
                     LongRecordingControlCodec.Phase.STARTING -> "Preparing recording…"
                     LongRecordingControlCodec.Phase.RUNNING -> "Recording · ${clock(state.accepted / 50)}"
                     LongRecordingControlCodec.Phase.STOPPING, LongRecordingControlCodec.Phase.DRAINING -> "Saving recording…"
@@ -57,6 +57,7 @@ internal data class DashboardReadings(val battery: String, val led: String, val 
                 if (device.faults != 0L || device.recorder?.fault == true) return "Device needs attention"
                 val recorder = device.recorder
                 if (recorder?.recording == true || device.microphonePower) return "Recording on pendant"
+                RecordingPowerStatus.blocked(timed, now, connected)?.let { return it }
                 if (recorder?.busy == true || device.resourceBusy) return "Pendant is busy"
                 if (recorder?.full == true) return "Storage full"
                 if (recorder?.ready == true) return "Ready to record"

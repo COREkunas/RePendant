@@ -109,6 +109,18 @@ static void dp_policy_tick(void)
 #ifdef OPENPENDANT_STANDALONE_CONTROL
  dp_standby_requested=false;
 #endif
+ unsigned int pairing_ms=pendant_ble_pairing_remaining_ms();
+ if(pairing_ms&&!atomic_get(&dp_recording)&&!mic_commands_busy()&&!pendant_recovery_is_pending()){
+  /* Explicit pairing indication cannot be disabled by cosmetic preferences.
+   * Temporary blue blink; never rewrite stored colors or hide active audio. */
+  uint8_t blue=((60000U-pairing_ms)%500U)<250U?32U:0U;
+  dp_idle_since=now;atomic_set(&dp_manual_until,0);
+  if(k_mutex_lock(&rgb_lock,K_NO_WAIT)==0){
+   bool changed=!rgb_known||rgb_applied[0]||rgb_applied[1]||rgb_applied[2]!=blue;
+   k_mutex_unlock(&rgb_lock);if(changed)(void)set_rgb(0,0,blue);
+  }
+  return;
+ }
  if(atomic_get(&dp_recording)||mic_commands_busy()||pendant_recovery_is_pending()||pendant_ble_pairing_busy()){
   dp_idle_since=now;return;
  }

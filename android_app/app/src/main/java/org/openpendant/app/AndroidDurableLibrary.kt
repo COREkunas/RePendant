@@ -117,6 +117,8 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
         else -> StorageSyncPower.refusal(client.telemetry,client.connected,android.os.SystemClock.elapsedRealtime(),client.longPeer()?.capabilityBits ?: 0)
     }
     val supportsBatterySync:Boolean get()=StorageSyncPower.supported(client.longPeer()?.capabilityBits ?: 0)
+    val syncPowerMessage:String get()=StorageSyncPower.readyMessage(client.telemetry,client.connected,
+        android.os.SystemClock.elapsedRealtime(),client.longPeer()?.capabilityBits ?: 0)
     fun sync(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.NORMAL)
     fun reviewQuickClear(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.INVENTORY_ONLY)
     fun finishPendingClear(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.DELETIONS_ONLY)
@@ -242,6 +244,7 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                     private var firstRead = true
                     private var lastSegment: SegmentIdentity? = null
                     override fun catalog(offset: Int, maximumEntries: Int, snapshotRevision: Long?, call: DurableSyncCall): DurableCatalogPage {
+                        publish(state.copy(transfer=null,message="Reading the pendant’s recording list… Keep it nearby."))
                         val began = android.os.SystemClock.elapsedRealtime()
                         try { return actual.catalog(offset, maximumEntries, snapshotRevision, call) }
                         finally { syncEvidence=syncEvidence.copy(metadataMillis=syncEvidence.metadataMillis+android.os.SystemClock.elapsedRealtime()-began) }
@@ -350,7 +353,7 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                 } else if(verifyingClear) {
                     if(result.catalogEntries.isEmpty()) "Pendant recordings cleared and empty storage confirmed. Pairing and recording keys kept. Existing storage is reused; this is not a secure erase."
                     else "Selected removals confirmed, but ${result.catalogEntries.size} recordings remain on the pendant. Nothing outside the reviewed selection was deleted; check storage again."
-                } else "Sync complete · $newlySaved new parts saved · ${SyncTransferProgress.formatBytes(received)} received · $deleted pendant deletions confirmed." +
+                } else "Last sync complete · ${result.catalogEntries.size} recordings found on pendant · $newlySaved new parts saved · ${SyncTransferProgress.formatBytes(received)} received · $deleted pendant deletions confirmed." +
                     if (result.pendingPhoneDeletion > 0) " ${result.pendingPhoneDeletion} phone deletion(s) need Resume deletion." else ""
             }
         }

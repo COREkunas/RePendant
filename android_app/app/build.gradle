@@ -25,8 +25,8 @@ android {
         applicationId 'org.openpendant.app'
         minSdk 26
         targetSdk 35
-        versionCode 67
-        versionName '0.6.49'
+        versionCode 70
+        versionName '0.6.52'
         testInstrumentationRunner 'org.openpendant.app.test.WhisperSmokeInstrumentation'
         ndk { abiFilters 'arm64-v8a' }
         externalNativeBuild {

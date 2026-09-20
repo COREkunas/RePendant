@@ -5,12 +5,21 @@ package org.openpendant.app
 internal object StorageSyncPower {
     const val USB_REQUIRED="Connect the pendant’s USB cable to sync. Battery-only transfer is not supported yet."
     fun supported(bits:Long)=bits==32479L
+    fun readyMessage(sample:TimedDeviceTelemetry?, connected:Boolean, now:Long, bits:Long):String {
+        refusal(sample,connected,now,bits)?.let { return it }
+        val battery=sample?.freshBattery(now,connected)
+        val batteryReady=supported(bits)&&battery?.let { it.portable&&!it.stopped&&it.startPowerReady&&
+            it.percent in 25..100&&it.millivolts in 3800..4450&&it.temperatureDecikelvin in 2781..3131 }==true
+        return if(batteryReady) "Ready on battery or USB. You can turn the screen off once sync starts."
+            else "Ready on USB. Keep the pendant USB connected during sync."
+    }
     fun powerRefusal(sample:TimedDeviceTelemetry?, connected:Boolean, now:Long, bits:Long=0):String? {
         if(!connected)return "Connect securely to the pendant before syncing."
         if(sample==null||!sample.fresh(now,true))return "Refresh pendant status before syncing."
         val recorder=sample.value.recorder ?: return "Pendant storage power status is unavailable."
         if(recorder.usbPowered)return null
         if(!supported(bits))return USB_REQUIRED
+        if(sample.value.battery?.stopped==true)return "Battery monitor needs attention. Connect pendant USB to sync."
         val battery=sample.freshBattery(now,true) ?: return "Waiting for a fresh pendant battery reading."
         if(!battery.portable||battery.stopped||!battery.startPowerReady||
             battery.percent !in 25..100||battery.millivolts !in 3800..4450||

@@ -118,7 +118,7 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         transferToggle.contentDescription="Transfer settings, ${if(transferExpanded)"expanded" else "collapsed"}"
         transferDetails.visibility=if(transferExpanded)View.VISIBLE else View.GONE
         compactStatus.stableText=when {
-            state.work==DurableLibraryWork.SYNC -> state.transfer?.let { "${it.percent}% · transferring to phone" }?:"Preparing transfer…"
+            state.work==DurableLibraryWork.SYNC -> state.transfer?.let { "${it.percent}% · transferring to phone" }?:state.message
             state.needsAttention -> "Storage needs attention"
             controller.transferPolicy.waitingForUsb(current?.bondAddress) -> "Low battery · waiting for safe power and an idle connection"
             refusal==StorageSyncPower.USB_REQUIRED -> "Connect pendant USB to sync"
@@ -133,7 +133,7 @@ internal class DurableLibrarySection(private val activity: Activity, private val
             current==null -> "Connect your pendant to sync."
             state.work==DurableLibraryWork.SYNC -> if(controller.supportsBatterySync) "Sync continues with the screen off. Keep the pendant nearby." else "Keep pendant USB connected. Sync continues with the screen off."
             refusal!=null -> refusal
-            else -> if(controller.supportsBatterySync) "Ready on battery or USB. You can turn the screen off once sync starts." else "USB power required. You can turn the screen off once sync starts."
+            else -> controller.syncPowerMessage
         }
         sync.isEnabled=refusal==null&&!legacyBusy()&&!controller.busy
         cancel.visibility=if(state.work==DurableLibraryWork.SYNC)View.VISIBLE else View.GONE

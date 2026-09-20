@@ -35,7 +35,14 @@ have additional restrictions. This is not an official Limitless product.
 - Experimental offline whisper.cpp transcription, including Lithuanian, for the
   supported short-clip path. Long-recording transcription remains unfinished.
 
-Current development snapshot: **firmware 0.4.57-battery-settings**, **Android 0.6.49**.
+Current source snapshot: **firmware 0.4.60-button-pairing**, **Android 0.6.52**.
+The [five-tap pairing shortcut](docs/BUTTON_PAIRING.md) replaces the old phone
+bond and opens a blue-blinking, 60-second window. Secure passkey entry still
+needs USB; physical replacement qualification is pending.
+The [battery recovery update](docs/GAUGE_RECOVERY.md) adds bounded calibration
+settling, deferred recovery when USB returns, and clearer app readiness/sync
+messages. After a full battery disconnect, recovery still requires USB for
+approximately two minutes; battery-only cold-start recovery is not solved.
 Android requires **Android 8+ and ARM64**. The supplied APK is development-signed,
 not a Play Store or production-hardened release. Firmware source targets nRF5340
 with nRF Connect SDK v3.4.0 / Zephyr.
@@ -45,6 +52,9 @@ The board has **512 MiB physical NAND**; the current recording layout enables
 provisioning still need work. See the [honest status matrix](docs/STATUS.md).
 
 ## Downloads: choose the right artifact
+
+Published binary downloads below remain at firmware 0.4.57 / Android 0.6.49.
+The newer source snapshot does not replace those release assets or tags.
 
 | Artifact | Purpose | Important boundary |
 | --- | --- | --- |

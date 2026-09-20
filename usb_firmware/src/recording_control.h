@@ -2,6 +2,7 @@
 #define OPENPENDANT_RECORDING_CONTROL_H
 #include <stdatomic.h>
 #include "long_recording_control_codec.h"
+#include "button_gesture.h"
 /* Additive coordinator. No pointers to conn,
  * PCM or caller frames are retained. Platform owns a non-recycled per-boot
  * connection epoch, exact bonded/encrypted/CCC/MTU authorization and a bounded
@@ -19,7 +20,7 @@
 /* DEFERRED is returned ONLY by command(), before claiming the metadata gate:
  * neither sequence nor operation was admitted. BUSY after admission must use
  * pending_reply(), never re-execute the command. Both keep the original budget. */
-enum lrc_rc { LRC_OK=0,LRC_PENDING=1,LRC_DEFERRED=2,LRC_ARGUMENT=-1,LRC_BUSY=-2,LRC_REFUSED=-3,LRC_FAULT=-4 };
+enum lrc_rc { LRC_OK=0,LRC_PENDING=1,LRC_DEFERRED=2,LRC_PAIRING_REQUEST=3,LRC_ARGUMENT=-1,LRC_BUSY=-2,LRC_REFUSED=-3,LRC_FAULT=-4 };
 struct lrc_port {
  void *user;
  uint64_t (*now_ms)(void*);
@@ -37,13 +38,14 @@ struct recording_control {
  uint64_t last_now,connection,last_connection;
  uint16_t sequence;
  uint32_t initialized,used,current;
- uint32_t armed,button_seen,button_candidate,button_stable,button_ticket;
- uint64_t armed_deadline,button_changed,button_pressed;
+ uint32_t armed,button_ticket;
+ uint64_t armed_deadline;
+ struct button_gesture button;
  /* A single local slot is reusable only with a fresh monotonically tagged
   * ticket. Remote consumed IDs remain retained and cannot alias this slot. */
  struct lc_state local;
  atomic_uint local_ticket,local_stop;
- uint32_t local_count,standalone,button_released,button_local_ready;
+ uint32_t local_count,standalone,button_local_ready;
 };
 int lrc_init(struct recording_control*,const struct lrc_port*,const uint8_t boot[16],const uint8_t binding[32]);
 int lrc_command(struct recording_control*,uint64_t,const uint8_t*,size_t,uint8_t reply[LC_RESPONSE_BYTES]);
@@ -65,7 +67,9 @@ void lrc_maintenance_release(struct recording_control*);
 int lrc_stop_requested(struct recording_control*,uint32_t ticket);
 /* Trusted physical input, sampled25ms on the platform main actor. No I/O or
  * microphone work here: a debounced50..1000ms tap queues an enabled standalone
- * or pre-armed operation, or stops the exact operation present at press. */
+ * or pre-armed operation, or stops the exact operation present at press, after
+ *600ms quiet. Five taps return LRC_PAIRING_REQUEST only if still idle; caller
+ * must separately claim power/maintenance admission. Never opens pairing here. */
 int lrc_button_sample(struct recording_control*,int pressed);
 int lrc_set_standalone(struct recording_control*,int enabled);
 #define LRC_LOCAL_TICKET 0x80000000U

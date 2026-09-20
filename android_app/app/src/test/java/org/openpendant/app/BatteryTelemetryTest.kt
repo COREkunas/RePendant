@@ -38,7 +38,10 @@ class BatteryTelemetryTest {
         assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=57 })))
         // Same capacity and battery data with USB absent.
         assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=57;word(it,48,512+2+4+8+16+32) })))
-        reject(p.copyOf().also { it[16]=58 })
+        assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=58 })))
+        assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=59 })))
+        assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=60 })))
+        reject(p.copyOf().also { it[16]=61 })
         reject(p.copyOf().also { word(it,40,0x1e8) })
         reject(p.copyOf().also { word(it,58,5119) })
     }

@@ -71,7 +71,7 @@ int lrc_command(struct recording_control *c,uint64_t conn,const uint8_t *frame,s
  if(request.command==LC_START&&!ticket){
   if(ready!=1||(!LC_PROFILE_FLAGS&&usb!=1)||c->used==LRC_OPERATIONS||(c->current&&active(state_at(c,c->current)))||
      now>UINT64_MAX-LRC_PREPARE_MS)return leave(c,LRC_REFUSED);
-  if(request.mode==2U&&(!c->button_seen||c->button_candidate||c->button_stable))return leave(c,LRC_REFUSED);
+  if(request.mode==2U&&(!c->button.seen||c->button.candidate||c->button.stable||c->button.count))return leave(c,LRC_REFUSED);
   ticket=++c->used;c->current=ticket;struct lc_state *s=&c->states[ticket-1U];
   memcpy(s->boot,c->idle.boot,16);memcpy(s->operation,request.operation,16);
   s->phase=LC_STARTING;s->flags=(uint16_t)(LC_PROFILE_FLAGS|(usb?LC_USB_PRESENT:0)|LC_PRODUCER_JOINED|LC_STORAGE_JOINED);
@@ -184,7 +184,7 @@ void lrc_maintenance_release(struct recording_control *c){(void)leave(c,0);}
 int lrc_set_standalone(struct recording_control *c,int enabled)
 {if(!c||!c->initialized||(enabled!=0&&enabled!=1)||!enter(c))return LRC_ARGUMENT;
  if(c->fault||c->submitting||c->armed||(c->current&&active(state_at(c,c->current))))return leave(c,LRC_REFUSED);
- c->standalone=(uint32_t)enabled;c->button_seen=0;c->button_released=0;c->button_local_ready=0;return leave(c,0);}
+ c->standalone=(uint32_t)enabled;c->button=(struct button_gesture){0};c->button_local_ready=0;return leave(c,0);}
 int lrc_button_sample(struct recording_control *c,int pressed)
 {
  if(!c||!c->initialized)return LRC_ARGUMENT;
@@ -193,24 +193,25 @@ int lrc_button_sample(struct recording_control *c,int pressed)
  uint64_t t;uint32_t start=0;int stopped=0;
  if(c->fault||tick(c,&t)||c->submitting)return leave(c,LRC_REFUSED);
  if(c->armed&&((!LC_PROFILE_FLAGS&&usb!=1)||pressed<0||t>=c->armed_deadline))cancel_arm(c,usb==1);
- if(pressed!=0&&pressed!=1){c->button_seen=0;c->button_released=0;c->button_local_ready=0;return leave(c,LRC_REFUSED);}
- if(!c->button_seen){
-  c->button_seen=1;c->button_candidate=c->button_stable=(uint32_t)pressed;
-  c->button_changed=t;c->button_pressed=t;c->button_ticket=0;c->button_released=pressed==0;c->button_local_ready=0;return leave(c,0);
+ enum bg_event event=bg_sample(&c->button,pressed,t);
+ if(pressed!=0&&pressed!=1){c->button_local_ready=0;return leave(c,LRC_REFUSED);}
+ if(event==BG_PRESS){
+  c->button_ticket=c->current;
+  c->button_local_ready=c->standalone&&(!c->current||!active(state_at(c,c->current)));
  }
- if(c->button_candidate!=(uint32_t)pressed){c->button_candidate=(uint32_t)pressed;c->button_changed=t;}
- if(c->button_stable!=c->button_candidate&&t-c->button_changed>=50U){
-  c->button_stable=c->button_candidate;
-  if(pressed){c->button_pressed=t;c->button_ticket=c->current;
-   c->button_local_ready=c->standalone&&c->button_released&&(!c->current||!active(state_at(c,c->current)));}
-  else{
-   uint64_t held=t-c->button_pressed;uint32_t selected=c->button_ticket;c->button_ticket=0;
-   if(held>=50U&&held<=1000U&&selected&&selected==c->current&&active(state_at(c,selected))){
+ if(event==BG_FIVE){
+  int idle=c->button_local_ready&&c->button_ticket==c->current&&!c->armed&&(!c->current||!active(state_at(c,c->current)));
+  c->button_local_ready=0;
+  return leave(c,idle?LRC_PAIRING_REQUEST:LRC_REFUSED);
+ }
+ if(event==BG_SINGLE){
+   uint32_t selected=c->button_ticket;c->button_ticket=0;
+   if(selected&&selected==c->current&&active(state_at(c,selected))){
     if(c->armed==selected){
      if(ready!=1||(!LC_PROFILE_FLAGS&&usb!=1)||t>UINT64_MAX-LRC_PREPARE_MS)cancel_arm(c,usb==1);
      else{start=selected;c->armed=0;c->armed_deadline=0;c->states[selected-1U].flags&=(uint16_t)~LC_BUTTON_ARMED;c->submitting=1;}
     }else{stop_ticket(c,selected);stopped=1;}
-   }else if(held>=50U&&held<=1000U&&selected==c->current&&c->button_local_ready&&c->standalone&&
+   }else if(selected==c->current&&c->button_local_ready&&c->standalone&&
        ready==1&&(LC_PROFILE_FLAGS||usb==1)&&c->local_count<LRC_LOCAL_TICKET-1U&&t<=UINT64_MAX-LRC_PREPARE_MS){
     /* No app permit: the debounced physical action is the start authority. */
     start=LRC_LOCAL_TICKET|++c->local_count;memset(&c->local,0,sizeof(c->local));
@@ -218,8 +219,7 @@ int lrc_button_sample(struct recording_control *c,int pressed)
     c->local.phase=LC_STARTING;c->local.flags=(uint16_t)(LC_PROFILE_FLAGS|(usb?LC_USB_PRESENT:0)|LC_PRODUCER_JOINED|LC_STORAGE_JOINED);
     atomic_store(&c->local_stop,0);atomic_store(&c->local_ticket,start);c->current=start;c->submitting=1;
    }
-   c->button_released=1;c->button_local_ready=0;
-  }
+   c->button_local_ready=0;
  }
  leave(c,0);
  if(stopped)c->port.wake(c->port.user);

@@ -90,7 +90,14 @@ int recording_runtime_long_pending(uint64_t conn,const uint8_t *p,size_t n,uint8
 {return long_bound?lrc_pending_reply(&long_control,conn,p,n,out):LRC_REFUSED;}
 int recording_runtime_long_available(void){return long_bound&&!atomic_get(&faulted);}
 void recording_runtime_long_button(int pressed)
-{if(long_bound)(void)lrc_button_sample(&long_control,pressed);}
+{
+ static struct button_gesture unbound_button;
+ int pair=0;
+ if(long_bound)pair=lrc_button_sample(&long_control,pressed)==LRC_PAIRING_REQUEST;
+ else pair=bg_sample(&unbound_button,pressed,now(NULL))==BG_FIVE;
+ /* One call per consumed gesture. A busy/refused result is never replayed. */
+ if(pair)(void)pendant_ble_pairing_replace_local();
+}
 int recording_runtime_long_command(uint64_t conn,const uint8_t *p,size_t n,uint8_t out[LC_RESPONSE_BYTES])
 {if(!long_bound)return LRC_REFUSED;return lrc_command(&long_control,conn,p,n,out);}
 int recording_runtime_long_disconnected(uint64_t conn)
