@@ -30,7 +30,11 @@ import java.util.concurrent.Executors
 class RecoveryActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
-    private lateinit var vault: RecipientKeyVault
+    // Resolved on the worker: after migration, backup/export refers to the
+    // bound recipient profile, not the unrelated newly created legacy key.
+    private val vault: RecipientKeyVault get() = intent.getStringExtra("keyResetOldFingerprint")?.let {
+        AndroidKeyReset.candidate(applicationContext,it)
+    } ?: AndroidDurableBinding.vault(applicationContext)
     private lateinit var stateLabel: TextView
     private lateinit var fingerprint: TextView
     private lateinit var notice: TextView
@@ -55,9 +59,6 @@ class RecoveryActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        val monitor = AndroidRecipientVaultOwner.monitor
-        vault = RecipientKeyVault(AndroidRecipientVaultStorage(applicationContext, monitor),
-            AndroidRecipientVaultWrapper(monitor), JcaRecipientVaultGenerator(), monitor)
         pendingPicker = savedInstanceState?.getInt("recoveryPicker", 0)?.takeIf { it in EXPORT..RESTORE } ?: 0
         pendingFingerprint = savedInstanceState?.getString("recoveryFingerprint")?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
         buildUi()
@@ -293,27 +294,31 @@ class RecoveryActivity : Activity() {
         val failure = if (requestCode == EXPORT) "The export could not be confirmed. The selected file may be incomplete or may contain " +
             "the secret key: keep it private. This export did not mark a backup as verified. Check key status before trying again." else null
         operation(success, failure) {
+            // Resolve the public enrollment BEFORE taking the vault lock.
+            // Enrollment publication takes binding -> vault locks in that order;
+            // resolving again inside the inverse order could deadlock setup.
+            val selectedVault = vault
             if (requestCode == EXPORT) {
                 // Bind the user's original selection and take the owned export
                 // under ONE lock, but never hold it while a document provider runs.
                 synchronized(AndroidRecipientVaultOwner.monitor) {
-                    requireCurrentFingerprint(expectedFingerprint)
-                    vault.export()
+                    requireCurrentFingerprint(expectedFingerprint, selectedVault)
+                    selectedVault.export()
                 }.use { backup ->
                     // Only the URI returned from the explicit create-document action.
                     contentResolver.openOutputStream(uri, "wt")?.use { RecoveryDocumentIO.writeBackup(it, backup) }
                         ?: throw RecoveryDocumentException()
                 }
-                vault.summary()
+                selectedVault.summary()
             } else {
                 val input = contentResolver.openInputStream(uri) ?: throw RecoveryDocumentException()
                 input.use { RecoveryDocumentIO.readBackup(it) }.use { backup ->
                     val bytes = backup.copyForExplicitExport()
                     try {
                         if (requestCode == VERIFY) synchronized(AndroidRecipientVaultOwner.monitor) {
-                            requireCurrentFingerprint(expectedFingerprint)
-                            vault.verifyBackup(bytes)
-                        } else vault.restore(bytes)
+                            requireCurrentFingerprint(expectedFingerprint, selectedVault)
+                            selectedVault.verifyBackup(bytes)
+                        } else selectedVault.restore(bytes)
                     }
                     finally { bytes.fill(0) }
                 }
@@ -321,8 +326,8 @@ class RecoveryActivity : Activity() {
         }
     }
 
-    private fun requireCurrentFingerprint(expected: String?) {
-        if (expected == null || vault.summary().fingerprintHex != expected) throw RecoveryDocumentException()
+    private fun requireCurrentFingerprint(expected: String?, selectedVault: RecipientKeyVault) {
+        if (expected == null || selectedVault.summary().fingerprintHex != expected) throw RecoveryDocumentException()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

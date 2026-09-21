@@ -47,7 +47,7 @@ static void sync_power_end(void);
 #include "recording_control_ble.h"
 #endif
 
-enum task { TASK_INIT=1,TASK_ENROLL,TASK_PROVISION,TASK_MOUNT,TASK_START,TASK_SYNC,TASK_RETIRE,TASK_CONTROL_PROBE,TASK_PHY_PROBE,TASK_PREIMAGE,TASK_RECOVER,TASK_DHARA_TRIAL,TASK_METADATA_EXTEND,TASK_CAPACITY_PROBE,TASK_FULL_PREPARE,TASK_FULL_FORMAT,TASK_FULL_COMPLETE };
+enum task { TASK_INIT=1,TASK_ENROLL,TASK_PROVISION,TASK_MOUNT,TASK_START,TASK_SYNC,TASK_RETIRE,TASK_CONTROL_PROBE,TASK_PHY_PROBE,TASK_PREIMAGE,TASK_RECOVER,TASK_DHARA_TRIAL,TASK_METADATA_EXTEND,TASK_CAPACITY_PROBE,TASK_FULL_PREPARE,TASK_FULL_FORMAT,TASK_FULL_COMPLETE,TASK_KEY_PREPARE,TASK_KEY_ERASE };
 struct command { uint32_t task,mode,usb_epoch,public_test;const struct shell *shell;uint8_t confirmation[32];
 #ifdef OPENPENDANT_PORTABLE_RECORDING
  uint32_t portable;
@@ -330,7 +330,7 @@ static int power(void *u,uint32_t access,uint32_t row,uint64_t d)
 static int yield_job(void *u,uint64_t d){if(check(u,0,d))return -EPERM;
 #ifdef OPENPENDANT_NATIVE_STORAGE
  static uint32_t reported;
- if(active.task==TASK_FULL_FORMAT&&active.shell&&volume.native.format_next>=reported+64U){
+ if((active.task==TASK_FULL_FORMAT||active.task==TASK_KEY_ERASE)&&active.shell&&volume.native.format_next>=reported+64U){
   reported=volume.native.format_next;shell_print(active.shell,"FULL_FORMAT_PROGRESS checked_blocks=%u total=2048 microphone=0",reported);
  }
 #endif
@@ -338,10 +338,11 @@ static int yield_job(void *u,uint64_t d){if(check(u,0,d))return -EPERM;
 static int confirmation(void *u,const struct recording_configuration *cfg,const uint8_t value[32],uint64_t d)
 {
  ARG_UNUSED(u);
- return check(NULL,1,d)||(active.task!=TASK_PROVISION&&active.task!=TASK_FULL_FORMAT&&active.task!=TASK_FULL_COMPLETE)||!atomic_get(&command_busy)||
+ return check(NULL,1,d)||(active.task!=TASK_PROVISION&&active.task!=TASK_FULL_FORMAT&&active.task!=TASK_FULL_COMPLETE&&active.task!=TASK_KEY_ERASE)||!atomic_get(&command_busy)||
  active.usb_epoch!=(uint32_t)atomic_get(&usb_epoch)||memcmp(active.confirmation,value,32)||
 #ifdef OPENPENDANT_NATIVE_STORAGE
- (active.task==TASK_FULL_COMPLETE?(!rcfg_is_full(cfg)||cfg->phase!=RCFG_PROVISIONING):active.task==TASK_FULL_FORMAT?(!rcfg_is_full(cfg)||cfg->phase!=RCFG_PREPARED):
+ (active.task==TASK_KEY_ERASE?(!rcfg_is_key_reset(cfg)||(cfg->phase!=RCFG_PREPARED&&cfg->phase!=RCFG_PROVISIONING)):
+  active.task==TASK_FULL_COMPLETE?(!rcfg_is_full(cfg)||cfg->phase!=RCFG_PROVISIONING):active.task==TASK_FULL_FORMAT?(!rcfg_is_full(cfg)||cfg->phase!=RCFG_PREPARED):
   (rcfg_is_full(cfg)||cfg->phase!=RCFG_PROVISIONING||active.mode!=1))?-EPERM:0;
 #else
  cfg->phase!=RCFG_PREPARED?-EPERM:0;
@@ -933,6 +934,18 @@ static int perform(struct command *cmd)
  if(cmd->task==TASK_RETIRE)return retire_perform(d);
  if(atomic_get(&catalog_epoch))return -EBUSY;
 #ifdef OPENPENDANT_NATIVE_STORAGE
+ if(cmd->task==TASK_KEY_PREPARE){
+  if(atomic_get(&volume_initialized)||atomic_get(&leased)||mic_commands_busy()||pendant_ble_pairing_busy()||pendant_recovery_is_pending())return -EPERM;
+  int rc=rcfg_prepare_key_reset(cmd->confirmation,cmd->spec.volume_id,cmd->spec.recipient_fingerprint,cmd->recipient);if(rc)return rc;
+  atomic_clear(&sync_configured);atomic_clear(&ready); /* All old RAM bindings retire only on normal reboot. */
+  return 0;
+ }
+ if(cmd->task==TASK_KEY_ERASE){
+  if(initialize_volume()||rv_erase_key_reset(&volume,cmd->confirmation,d)||access_store()||rv_suspend(&volume,d))return -EIO;
+  atomic_set(&volume_mounted,1);atomic_set(&volume_suspended,1);
+  /* Boot rebinds long-control to the ACTIVE successor; never enable stale RAM ownership. */
+  atomic_clear(&sync_configured);atomic_clear(&ready);return 0;
+ }
  if(cmd->task==TASK_FULL_PREPARE){
   if(atomic_get(&volume_initialized)||atomic_get(&leased)||mic_commands_busy()||pendant_ble_pairing_busy()||pendant_recovery_is_pending())return -EPERM;
   int rc=rcfg_prepare_full(cmd->confirmation,cmd->spec.volume_id);if(rc)return rc;
@@ -1530,16 +1543,47 @@ static int provision_command(const struct shell *sh,size_t argc,char **argv)
 static int full_info_command(const struct shell *sh,size_t argc,char **argv)
 {
  ARG_UNUSED(argv);struct recording_configuration cfg;
- if(argc!=1||!local(sh)||rcfg_get(&cfg)||!rcfg_is_full(&cfg))return -EPERM;
+ if(argc!=1||sh!=shell_backend_uart_get_ptr()||!atomic_get(&usb_configured)||rcfg_get(&cfg)||!rcfg_is_full(&cfg))return -EPERM;
  static const uint8_t domain[]="OpenPendant native Dhara disposable format v1";
  uint8_t bytes[sizeof(domain)+512],sum[32];char text[131];size_t n=0;
  memcpy(bytes,domain,sizeof(domain));memcpy(bytes+sizeof(domain),cfg.descriptor,512);
  if(psa_hash_compute(PSA_ALG_SHA_256,bytes,sizeof(bytes),sum,32,&n)!=PSA_SUCCESS||n!=32)return -EIO;
- hex(sum,32,text);shell_print(sh,"RECORDER_FULL_CONFIRM sha=%s phase=%u generation=2 blocks=2048 logical_sectors=94208 slots=5120",text,cfg.phase);
+ hex(sum,32,text);shell_print(sh,"RECORDER_FULL_CONFIRM sha=%s phase=%u generation=%llu blocks=2048 logical_sectors=94208 slots=5120",text,cfg.phase,(unsigned long long)cfg.spec.generation);
  hex(cfg.spec.device_id,16,text);shell_print(sh,"RECORDER_FULL_DEVICE id=%s",text);
  hex(cfg.spec.volume_id,16,text);shell_print(sh,"RECORDER_FULL_VOLUME id=%s",text);
  hex(cfg.spec.recipient_fingerprint,32,text);shell_print(sh,"RECORDER_FULL_RECIPIENT fingerprint=%s",text);
  hex(cfg.recipient,65,text);shell_print(sh,"RECORDER_FULL_PUBLIC point=%s",text);return 0;
+}
+static int key_info_command(const struct shell *sh,size_t argc,char **argv)
+{
+ ARG_UNUSED(argv);struct recording_configuration cfg;char text[65];
+ if(argc!=1||sh!=shell_backend_uart_get_ptr()||!atomic_get(&usb_configured)||rcfg_get(&cfg)||!rcfg_is_full(&cfg))return -EPERM;
+ shell_print(sh,"RECORDER_KEY_RESET v=1 phase=%u reset=%u busy=%u fault=%u fresh=%u",
+  cfg.phase,(unsigned)rcfg_is_key_reset(&cfg),(unsigned)atomic_get(&command_busy),(unsigned)atomic_get(&faulted),
+  (unsigned)(!atomic_get(&volume_initialized)&&atomic_get(&ready)));
+ hex(rcfg_descriptor_digest(&cfg),32,text);shell_print(sh,"RECORDER_KEY_DESCRIPTOR sha=%s",text);
+ if(rcfg_is_key_reset(&cfg)){
+  hex(cfg.descriptor+264,32,text);shell_print(sh,"RECORDER_KEY_PARENT sha=%s",text);
+ }
+ return 0;
+}
+static int key_prepare_command(const struct shell *sh,size_t argc,char **argv)
+{
+ struct recording_configuration cfg;struct command cmd={.task=TASK_KEY_PREPARE,.deadline=now(NULL)+5000};
+ if(argc!=6||strcmp(argv[5],"delete-pendant-recordings")||!local(sh)||!diagnostics_idle()||
+  atomic_get(&volume_initialized)||atomic_get(&control_probe_used)||atomic_get(&phy_probe_used)||
+  atomic_get(&preimage_used)||atomic_get(&recovery_used)||rcfg_get(&cfg)||!rcfg_is_full(&cfg)||cfg.phase!=RCFG_ACTIVE||
+  unhex(argv[1],cmd.confirmation,32)||memcmp(cmd.confirmation,rcfg_descriptor_digest(&cfg),32)||
+  unhex(argv[2],cmd.spec.volume_id,16)||unhex(argv[3],cmd.spec.recipient_fingerprint,32)||unhex(argv[4],cmd.recipient,65))return -EPERM;
+ return queue(sh,&cmd);
+}
+static int key_erase_command(const struct shell *sh,size_t argc,char **argv)
+{
+ struct recording_configuration cfg;struct command cmd={.task=TASK_KEY_ERASE,.deadline=now(NULL)+3600000U};
+ if(argc!=3||strcmp(argv[2],"delete-pendant-recordings")||!local(sh)||!diagnostics_idle()||atomic_get(&volume_initialized)||
+  rcfg_get(&cfg)||!rcfg_is_key_reset(&cfg)||(cfg.phase!=RCFG_PREPARED&&cfg.phase!=RCFG_PROVISIONING)||
+  unhex(argv[1],cmd.confirmation,32))return -EPERM;
+ return queue(sh,&cmd);
 }
 static int full_prepare_command(const struct shell *sh,size_t argc,char **argv)
 {
@@ -1709,6 +1753,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(recorder_commands,
 #ifdef OPENPENDANT_NATIVE_STORAGE
  SHELL_CMD_ARG(fullprepare,NULL,"One-way new full-chip volume, same recipient; fresh boot required before/after.",full_prepare_command,4,0),
  SHELL_CMD_ARG(fullformat,NULL,"One-shot complete external NAND format from prepared full profile; no microphone.",full_format_command,3,0),
+ SHELL_CMD_ARG(keyinfo,NULL,"Cached public key-reset status; no NAND or microphone.",key_info_command,1,0),
+ SHELL_CMD_ARG(keyprepare,NULL,"Prepare a new public recipient and full-volume deletion; requires normal restart next.",key_prepare_command,6,0),
+ SHELL_CMD_ARG(keyerase,NULL,"Explicit erase/restart of an inactive key-reset volume only; no microphone.",key_erase_command,3,0),
  SHELL_CMD_ARG(fullcomplete,NULL,"Explicit phase2 completion after native root verification; no reformat.",full_complete_command,3,0),
  SHELL_CMD_ARG(fullinfo,NULL,"Public full-profile identity and explicit format confirmation; no NAND access.",full_info_command,1,0),
  SHELL_CMD_ARG(metadataextend,NULL,"Explicit v1->v2 metadata copy; preserves all records and deletion history.",metadata_extend_command,2,0),

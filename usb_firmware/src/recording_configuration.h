@@ -10,7 +10,8 @@
  * The preparer must independently verify the named preservation manifest and
  * the phone's backup-verified PUBLIC recipient. The device validates identity,
  * canonical descriptor, fixed pool and P-256 point, not host backup file bytes.
- * No replacement/rotation/reset API. Failed saves/readbacks fence this boot.
+ * Explicit full-volume key reset is the sole recipient replacement API.
+ * Failed saves/readbacks fence this boot.
  * Schema v1 revision is exactly phase + count(faulted control banks).
  * EMPTY means no leaf delivered by the settings API, not proof that storage
  * was never provisioned: the NVS backend may skip/clean damaged entries.
@@ -35,6 +36,14 @@ int rcfg_prepare(const struct owned_volume_spec*,const uint8_t recipient[65]);
  * Persists PREPARED only; never erases NAND or automatically provisions.
  * Schema2 replaces the SAME settings leaf so old firmware fails closed. */
 int rcfg_prepare_full(const uint8_t expected_legacy_digest[32],const uint8_t new_volume[16]);
+/* Destructive NEW-key intent, not an erase. Requires exact ACTIVE full parent,
+ * fresh volume UUID (also transaction ID), different verified public recipient.
+ * One atomic settings leaf retains parent public identity and PREPARED child.
+ * All old storage actors must be unused; reboot before binding the child.
+ * Schema3 fails closed on older firmware. Phone backups/copies are not targets. */
+int rcfg_prepare_key_reset(const uint8_t expected_digest[32],const uint8_t new_volume[16],
+ const uint8_t fingerprint[32],const uint8_t recipient[65]);
+int rcfg_is_key_reset(const struct recording_configuration*);
 int rcfg_is_full(const struct recording_configuration*); /* trusted rcfg_get result only */
 const uint8_t *rcfg_descriptor_digest(const struct recording_configuration*);
 void rcfg_extent_identity(const struct recording_configuration*,struct recording_extent_identity*);

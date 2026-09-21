@@ -16,6 +16,11 @@ static int hook_result;
 static int maintenance_error,maintenance_held,power_lost,unpair_error,unpair_calls,saved_bonds,readback_error;
 static struct shell usb_shell={1}, other_shell={2};
 static struct bt_conn peer, stranger;
+static bt_addr_le_t fake_identity;
+static size_t identity_count;
+static unsigned int printed_identity[7];
+void bt_id_get(bt_addr_le_t *address,size_t *count)
+{if(lock_depth)violations++;*address=fake_identity;*count=identity_count;}
 static char *open_argv[]={"open","confirm"};
 static char *status_argv[]={"status"};
 static char *close_argv[]={"close"};
@@ -81,6 +86,11 @@ const struct shell *shell_backend_uart_get_ptr(void){return &usb_shell;}
 void shell_print(const struct shell *sh,const char *format,...)
 {
 	outside_lock();if(sh!=&usb_shell)violations++;print_count++;
+	if(prefix(format,"PAIRING_USB_ID ")){
+		va_list args;va_start(args,format);
+		for(int i=0;i<7;i++)printed_identity[i]=va_arg(args,unsigned int);
+		va_end(args);
+	}
 	if(prefix(format,"PAIRING_PASSKEY ")){
 		va_list args;va_start(args,format);stored_code_print=(int)va_arg(args,unsigned int);
 		va_end(args);code_print_count++;
@@ -97,6 +107,9 @@ static void reset_peer(struct bt_conn *conn,int address)
 static void reset(void)
 {
 	now=1000;lock_depth=0;violations=0;unlock_hook=NULL;bond_hook=NULL;
+	identity_count=1;fake_identity.type=1;
+	for(int i=0;i<6;i++)fake_identity.a.val[i]=(uint8_t)(i+1);
+	fake_identity.a.val[5]=0xc6;
 	register_error=info_register_error=settings_error=security_error=scheduling_error=0;
 	print_count=code_print_count=stored_code_print=0;mic_busy=recovery_busy=false;
 	cancel_reentry=true;fake_bonds=0;fake_bond_address=11;hook_result=0;
@@ -136,6 +149,17 @@ __declspec(dllexport) int security_tests(void)
 	reset();fake_bonds=2;CHECK(pendant_ble_security_init()==-EOVERFLOW);
 	reset();CHECK(pendant_ble_security_init()==0);
 	CHECK(pendant_ble_security_init()==-EALREADY);
+	CHECK(command_usbinfo(&other_shell,1,status_argv)==-EINVAL);
+	CHECK(command_usbinfo(&usb_shell,2,status_argv)==-EINVAL);
+	CHECK(command_usbinfo(&usb_shell,1,status_argv)==0);
+	CHECK(printed_identity[0]==0xc6 && printed_identity[5]==1 && printed_identity[6]==1);
+	CHECK(!window_open && !unpair_calls && !code_print_count && !pending);
+	identity_count=0;CHECK(command_usbinfo(&usb_shell,1,status_argv)==-EIO);identity_count=1;
+	fake_identity.type=2;CHECK(command_usbinfo(&usb_shell,1,status_argv)==-EIO);fake_identity.type=1;
+	fake_identity.a.val[5]=0x80;CHECK(command_usbinfo(&usb_shell,1,status_argv)==-EIO);
+	fake_identity.type=0;CHECK(!command_usbinfo(&usb_shell,1,status_argv));
+	memset(fake_identity.a.val,0,6);CHECK(command_usbinfo(&usb_shell,1,status_argv)==-EIO);
+	init_result=-EACCES;CHECK(command_usbinfo(&usb_shell,1,status_argv)==-EACCES);init_result=0;
 	CHECK(!pendant_ble_authorized(NULL));
 	connected(&peer,0);CHECK(peer.disconnected==1 && peer.set_security==0);
 	CHECK(!pendant_ble_pairing_busy());

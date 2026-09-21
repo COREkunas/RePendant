@@ -203,7 +203,7 @@ int rv_mount(struct recording_volume *v,uint64_t d)
  v->attempted=1;if(configuration(v,RCFG_ACTIVE))return done(v,RV_FAULT);v->state=RV_MOUNTING;
  if(rns_mount(&v->native,v->deadline)||applications(v,0))return done(v,fence(v));
  v->state=RV_READ_ONLY;return done(v,0);}
-int rv_provision_full(struct recording_volume *v,const uint8_t confirmation[32],uint64_t d)
+static int provision_full(struct recording_volume *v,const uint8_t confirmation[32],uint64_t d,int key_reset)
 {
  if(!v||!ext(v,confirmation,32))return RV_ARGUMENT;
  int rc=lock(v);if(rc)return rc;
@@ -212,11 +212,13 @@ int rv_provision_full(struct recording_volume *v,const uint8_t confirmation[32],
  if(d<=n||d-n>3600000U){atomic_store(&v->gate,0);return RV_ARGUMENT;}
  v->deadline=d;
  if(check(v,0,d))return done(v,RV_FAULT);
- if(!rcfg_is_full(&v->configuration)||v->state!=RV_PREPARED||v->attempted||v->configuration.phase!=RCFG_PREPARED||
+ uint32_t phase=v->configuration.phase;
+ if(!rcfg_is_full(&v->configuration)||v->state!=RV_PREPARED||v->attempted||
+  (key_reset?(!rcfg_is_key_reset(&v->configuration)||(phase!=RCFG_PREPARED&&phase!=RCFG_PROVISIONING)):phase!=RCFG_PREPARED)||
   memcmp(confirmation,v->confirmation,32))return done(v,RV_REFUSED);
- if(configuration(v,RCFG_PREPARED)||v->hooks.confirm_provision(v->hooks.user,&v->configuration,confirmation,d)||check(v,1,d))return done(v,fence(v));
+ if(configuration(v,phase)||v->hooks.confirm_provision(v->hooks.user,&v->configuration,confirmation,d)||check(v,1,d))return done(v,fence(v));
  v->attempted=1;v->confirmed=1;
- if(rcfg_advance(RCFG_PREPARED,RCFG_PROVISIONING)||configuration(v,RCFG_PROVISIONING))return done(v,fence(v));
+ if((phase==RCFG_PREPARED&&rcfg_advance(RCFG_PREPARED,RCFG_PROVISIONING))||configuration(v,RCFG_PROVISIONING))return done(v,fence(v));
  v->state=RV_PROVISIONING;
  rc=rns_format_begin(&v->native,d);
  for(uint32_t steps=0;rc==RNS_MORE&&steps<=RLL_BLOCKS;++steps){
@@ -226,6 +228,10 @@ int rv_provision_full(struct recording_volume *v,const uint8_t confirmation[32],
  if(rc||applications(v,1)||rns_sync(&v->native,d)||rcfg_advance(RCFG_PROVISIONING,RCFG_ACTIVE)||configuration(v,RCFG_ACTIVE))return done(v,fence(v));
  v->state=RV_WRITABLE;return done(v,0);
 }
+int rv_provision_full(struct recording_volume *v,const uint8_t confirmation[32],uint64_t d)
+{return provision_full(v,confirmation,d,0);}
+int rv_erase_key_reset(struct recording_volume *v,const uint8_t confirmation[32],uint64_t d)
+{return provision_full(v,confirmation,d,1);}
 int rv_grant(struct recording_volume *v,uint64_t d)
 {int rc=begin(v,d);if(rc)return rc;if(v->state!=RV_READ_ONLY||!root_ok(v))return done(v,RV_REFUSED);
  if(configuration(v,RCFG_ACTIVE)||rns_grant(&v->native,v->deadline))return done(v,fence(v));

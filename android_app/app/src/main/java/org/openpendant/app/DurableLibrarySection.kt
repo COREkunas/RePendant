@@ -34,8 +34,8 @@ internal class DurableLibrarySection(private val activity: Activity, private val
     private val transferProgress=ProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal).apply { max=100 }
     private val prerequisites=text("",13,muted)
     private val sync=button("Sync recordings") { confirmSync() }
-    private val cancel=button("Stop transfer") { controller.cancel() }
-    private val refresh=button("Refresh library") { if(!legacyBusy())controller.refresh() }
+    private val cancel=button("Stop sync") { controller.cancel() }
+    private val refresh=button("Refresh phone list") { if(!legacyBusy())controller.refresh() }
     private val key=button("Recording key and recovery…") { if(!legacyBusy()&&!controller.busy)recovery() }
     private val rows=column()
     private val listSummary=text("",12,muted)
@@ -56,6 +56,10 @@ internal class DurableLibrarySection(private val activity: Activity, private val
     private val players=mutableMapOf<DurableRecordingId,PlayerViews>()
     private val prefs=controller.transferPreferences
     private var settingRemove=false
+    private val detailsOnly=toggle("Sync recording details only",prefs.read().content==RecordingSyncContent.DETAILS_ONLY) {
+        save(prefs.read().copy(content=if(it)RecordingSyncContent.DETAILS_ONLY else RecordingSyncContent.RECORDINGS_AND_AUDIO))
+    }.apply { tag="sync-details-only" }
+    private val removalHint=text("",12,muted)
     private val autoSync=toggle("Auto sync",prefs.read().automatic) { save(prefs.read().copy(automatic=it)) }
     private val lowBattery=toggle("Sync when battery is low",prefs.read().lowBattery) { save(prefs.read().copy(lowBattery=it)) }
     private val removeAfter=toggle("Remove from pendant after sync",prefs.read().removeAfterSync) { enabled -> changeRemoval(enabled) }
@@ -63,12 +67,14 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         dashboard.addView(transferToggle);dashboard.addView(compactStatus)
         dashboard.addView(transferProgress);dashboard.addView(sync);dashboard.addView(cancel);dashboard.addView(transferDetails)
         transferDetails.addView(prerequisites);transferDetails.addView(status);transferDetails.addView(key)
+        transferDetails.addView(detailsOnly)
+        transferDetails.addView(text("Update the list, durations and copy status without downloading audio or applying deletions. Also applies to auto sync and low-battery sync.",12,muted))
         transferDetails.addView(autoSync)
         transferDetails.addView(text("Once per connection, while this app is open and your pendant is idle with enough power.",12,muted))
         transferDetails.addView(removeAfter)
-        transferDetails.addView(text("Keep the verified phone copy. Applies to new transfers only.",12,muted))
+        transferDetails.addView(removalHint)
         transferDetails.addView(lowBattery)
-        transferDetails.addView(text("Queues a transfer at the threshold below. Battery sync needs supported firmware and at least 25%; choose 35% for a useful margin. Otherwise connect USB.",12,muted))
+        transferDetails.addView(text("Queues the selected sync mode at the threshold below. Battery sync needs supported firmware and at least 25%; choose 35% for a useful margin. Otherwise connect USB.",12,muted))
         val threshold=Spinner(activity).apply { contentDescription="Low battery threshold";minimumHeight=dp(48) }
         threshold.adapter=adapter(listOf("Low battery: 15%","Low battery: 25%","Low battery: 35%"))
         threshold.setSelection(listOf(15,25,35).indexOf(prefs.read().lowBatteryPercent))
@@ -114,6 +120,14 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         val state=controller.state
         val current=try { peer() } catch (_:Exception) { null }
         val refusal=controller.syncRefusal(current)
+        val details=prefs.read().content==RecordingSyncContent.DETAILS_ONLY
+        settingRemove=true
+        detailsOnly.isChecked=details
+        settingRemove=false
+        detailsOnly.isEnabled=!controller.busy&&!legacyBusy()
+        removeAfter.isEnabled=!details&&!controller.busy&&!legacyBusy()
+        removalHint.stableText=if(details)"Inactive in details-only mode. No recordings are removed." else "Keep the verified phone copy. Applies to new audio transfers only."
+        sync.stableText=if(details)"Sync details" else "Sync recordings"
         transferToggle.stableText=if(transferExpanded)"Transfer  ▴" else "Transfer  ▾"
         transferToggle.contentDescription="Transfer settings, ${if(transferExpanded)"expanded" else "collapsed"}"
         transferDetails.visibility=if(transferExpanded)View.VISIBLE else View.GONE
@@ -122,6 +136,7 @@ internal class DurableLibrarySection(private val activity: Activity, private val
             state.needsAttention -> "Storage needs attention"
             controller.transferPolicy.waitingForUsb(current?.bondAddress) -> "Low battery · waiting for safe power and an idle connection"
             refusal==StorageSyncPower.USB_REQUIRED -> "Connect pendant USB to sync"
+            details -> "Details only · ${state.recordings.count(RecordingListPresentation::phoneComplete)} saved on phone"
             else -> "${state.recordings.count(RecordingListPresentation::needsSync)} need sync · ${state.recordings.count(RecordingListPresentation::phoneComplete)} saved on phone"
         }
         status.stableText=state.message
@@ -307,8 +322,8 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         val phone=CheckBox(activity).apply { text="Delete from phone";setTextColor(ink);minHeight=dp(48);isChecked=picked.first;isEnabled=phoneAllowed&&pending==null }
         val pendant=CheckBox(activity).apply { text="Delete from pendant";setTextColor(ink);minHeight=dp(48);isChecked=picked.second&&pendantAllowed;isEnabled=pendantAllowed&&pending==null }
         item.addView(phone);item.addView(pendant)
-        val delete=button(if(pending==null)"Delete selected copies…" else if(pending.phonePending)"Resume deletion…" else "Sync to finish deletion…") {
-            if(pending!=null&&!pending.phonePending)confirmSync() else {
+        val delete=button(if(pending==null)"Delete selected copies…" else if(pending.phonePending)"Resume deletion…" else "Finish pending deletions…") {
+            if(pending!=null&&!pending.phonePending)confirmSync(deletionsOnly=true) else {
                 val location=pending?.location ?: if(phone.isChecked&&pendant.isChecked)DeleteLocation.BOTH else if(phone.isChecked)DeleteLocation.PHONE_ONLY else if(pendant.isChecked)DeleteLocation.PENDANT_ONLY else return@button
                 confirmDelete(row,location,pending?.keepTranscript?:false)
             }
@@ -319,7 +334,7 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         fun selectionChanged(){choices[row.recording]=phone.isChecked to pendant.isChecked;delete.isEnabled=(phoneAllowed&&phone.isChecked)||(pendantAllowed&&pendant.isChecked)}
         phone.setOnCheckedChangeListener { _,_->selectionChanged() };pendant.setOnCheckedChangeListener { _,_->selectionChanged() }
         item.addView(delete)
-        if(pending!=null)item.addView(text("Saved deletion request. Pendant removal is confirmed during sync.",12,muted))
+        if(pending!=null)item.addView(text("Saved deletion request. Details-only sync leaves it pending; use Finish pending deletions or full recording sync.",12,muted))
     }
     private fun confirmDelete(row:RecordingSyncSnapshot,location:DeleteLocation,keepTranscript:Boolean) {
         if(controller.busy||legacyBusy())return
@@ -332,17 +347,26 @@ internal class DurableLibrarySection(private val activity: Activity, private val
                 if(!controller.busy&&!legacyBusy())controller.delete(row.recording,location,keepTranscript)
             }.show()
     }
-    private fun confirmSync() {
+    private fun confirmSync(deletionsOnly:Boolean=false) {
         if(controller.busy||legacyBusy())return
         val selected=try{peer()}catch(_:Exception){null}
         val refusal=controller.syncRefusal(selected)
         if(refusal!=null){AlertDialog.Builder(activity).setTitle("Not ready to sync").setMessage(refusal).setPositiveButton("OK",null).show();return}
-        AlertDialog.Builder(activity).setTitle("Sync recordings?")
-            .setMessage((if(controller.supportsBatterySync) "Keep the pendant nearby with enough battery." else "Keep pendant USB power connected.")+" Saved deletion requests will also be completed.\n\n"+
-                (if(prefs.read().removeAfterSync)"New phone copies will be verified before their pendant copies are removed." else "Other pendant copies will be kept."))
+        val content=prefs.read().content // Freeze the user's reviewed scope until confirmation.
+        val details=content==RecordingSyncContent.DETAILS_ONLY
+        val explanation=when {
+            deletionsOnly -> "Complete all previously saved deletion requests for this pendant. No audio will be downloaded. Nothing outside those saved requests will be deleted."
+            details -> "Update recording list, durations and copy status only. No audio will be downloaded, no download receipts sent and no recordings deleted. Pending deletions remain pending."
+            else -> "Saved deletion requests will also be completed.\n\n"+
+                if(prefs.read().removeAfterSync)"New phone copies will be verified before their pendant copies are removed." else "Other pendant copies will be kept."
+        }
+        AlertDialog.Builder(activity).setTitle(if(deletionsOnly)"Finish pending deletions?" else if(details)"Sync recording details?" else "Sync recordings?")
+            .setMessage(explanation+"\n\n"+(if(controller.supportsBatterySync) "Keep the pendant nearby with enough battery." else "Keep pendant USB power connected."))
             .setNegativeButton("Not now",null).setPositiveButton("Sync") { _,_->
                 val fresh=peer()
-                if(fresh!=null&&fresh==selected&&!controller.busy&&!legacyBusy()&&controller.syncRefusal(fresh)==null)controller.sync(fresh)
+                if(fresh!=null&&fresh==selected&&!controller.busy&&!legacyBusy()&&controller.syncRefusal(fresh)==null) {
+                    if(deletionsOnly)controller.finishPendingClear(fresh) else controller.sync(fresh,content)
+                }
             }.show()
     }
     private fun showDetails(row:RecordingSyncSnapshot) {

@@ -62,6 +62,10 @@ class AndroidRecipientVaultWrapper private constructor(private val monitor: Any,
     constructor(monitor: Any) : this(monitor, ALIAS_PREFIX)
 
     companion object {
+        internal fun forRecipient(monitor: Any, fingerprint: String): AndroidRecipientVaultWrapper {
+            AndroidRecipientProfiles.checkFingerprint(fingerprint)
+            return AndroidRecipientVaultWrapper(monitor, "openpendant.recipient.profile.$fingerprint.")
+        }
         /** Explicit test-only namespace; never called by production construction. */
         internal fun forSyntheticTests(monitor: Any, testId: UUID) =
             AndroidRecipientVaultWrapper(monitor, "openpendant.recipient.test.$testId.")
@@ -165,6 +169,11 @@ class AndroidRecipientVaultStorage private constructor(context: Context, private
     constructor(context: Context, monitor: Any) : this(context, monitor, DIRECTORY_NAME, ALIAS_PREFIX)
 
     companion object {
+        internal fun forRecipient(context: Context, monitor: Any, fingerprint: String): AndroidRecipientVaultStorage {
+            AndroidRecipientProfiles.checkFingerprint(fingerprint)
+            return AndroidRecipientVaultStorage(context, monitor, "recipient-profile-$fingerprint",
+                "openpendant.recipient.profile.$fingerprint.")
+        }
         /** Dedicated generated namespace only. No test ever reads owner storage. */
         internal fun forSyntheticTests(context: Context, monitor: Any, testId: UUID) =
             AndroidRecipientVaultStorage(context, monitor, "recipient-vault-test-$testId",

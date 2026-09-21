@@ -89,7 +89,9 @@ class DurableRecordingSyncTest {
         val remote=FakeTransport(values.toList(),metadata)
         fun session(clock:()->Long={now})=DurableRecordingSyncSession(connection,remote,metadata,store,clock)
         fun run()=session().run()
-        fun runMode(mode:DurableSyncMode)=DurableRecordingSyncSession(connection,remote,metadata,store,{now},mode=mode).run()
+        fun runMode(mode:DurableSyncMode)=DurableRecordingSyncSession(connection,
+            if(mode==DurableSyncMode.INVENTORY_ONLY)MetadataOnlyRecordingTransport(remote) else remote,
+            metadata,store,{now},mode=mode).run()
         fun seed(manifest:RecordingManifest) {
             metadata.rows[manifest.recording]=RecordingSyncSnapshot(manifest.recording,manifest=manifest,pendantCopy=PendantCopy.PRESENT)
         }
@@ -201,6 +203,44 @@ class DurableRecordingSyncTest {
         val r=f.runMode(DurableSyncMode.INVENTORY_ONLY)
         assertEquals(1,r.catalogEntries.size);assertEquals(0,r.tombstonesConfirmed)
         assertEquals(before,f.metadata.rows);assertTrue(f.remote.deletes.isEmpty());assertTrue(f.remote.receipts.isEmpty())
+    }
+    @Test fun metadataOnlyGuardRejectsEveryPayloadAndMutationBeforeDelegate() {
+        val data=manifest(recording,1);val f=Fixture(data);f.seed(data.first)
+        f.metadata.change(recording){it.requestDeletion(UUID(11,12),DeleteLocation.PENDANT_ONLY)}
+        f.runMode(DurableSyncMode.INVENTORY_ONLY)
+        val guard=MetadataOnlyRecordingTransport(f.remote);val call=checkNotNull(f.remote.lastCall)
+        val segment=data.first.segments.single();val intent=f.metadata.rows.getValue(recording).deletions.single()
+        val before=f.remote.calls.toList()
+        assertThrows(IllegalStateException::class.java){guard.read(segment,0,256,call)}
+        assertThrows(IllegalStateException::class.java){guard.receipt(segment,call)}
+        assertThrows(IllegalStateException::class.java){guard.receiptRange(data.first,0,1,call)}
+        assertThrows(IllegalStateException::class.java){guard.delete(intent,call)}
+        assertEquals(before,f.remote.calls)
+    }
+    @Test fun inventoryPreservesRealPendingReceiptAndExistingPhoneBytes() {
+        val data=manifest(recording,1);val f=Fixture(data)
+        f.remote.after={name,_->if(name=="receipt")error("synthetic lost receipt acknowledgement")}
+        assertThrows(DurableSyncException::class.java){f.run()}
+        val before=f.metadata.rows.getValue(recording)
+        assertEquals(1,before.pendingReceipts.size);assertEquals(1,before.phoneSegments.size)
+        val path=File(f.directory,f.expect(data.first.segments.single()).slot+".segment")
+        val ciphertext=path.readBytes();f.remote.after={_,_->};f.remote.calls.clear()
+        val result=f.runMode(DurableSyncMode.INVENTORY_ONLY)
+        assertEquals(0,result.receiptsConfirmed);assertEquals(before,f.metadata.rows.getValue(recording))
+        assertArrayEquals(ciphertext,path.readBytes());assertTrue(f.remote.calls.all{it=="catalog"||it=="manifest"})
+    }
+    @Test fun inventoryRefreshDoesNotPreventLaterExplicitAudioSync() {
+        val f=Fixture(manifest(recording,2),manifest(other,3))
+        val details=f.runMode(RecordingSyncContent.DETAILS_ONLY.mode)
+        assertEquals(2,details.catalogRecords);assertEquals(0,details.segmentsPublished)
+        assertEquals(5,f.runMode(RecordingSyncContent.RECORDINGS_AND_AUDIO.mode).segmentsPublished)
+        assertEquals(5,f.metadata.rows.values.sumOf{it.phoneSegments.size})
+    }
+    @Test fun emptyInventoryIsSuccessfulAndDoesNotInventDeletionProof() {
+        val f=Fixture();val existing=manifest(recording,1).first;f.seed(existing)
+        val before=f.metadata.rows.toMap();val result=f.runMode(DurableSyncMode.INVENTORY_ONLY)
+        assertEquals(0,result.catalogRecords);assertEquals(before,f.metadata.rows)
+        assertEquals(listOf("catalog"),f.remote.calls);assertEquals(1,f.remote.ended)
     }
     @Test fun deletionOnlyDoesNotDownloadNewOrUnselectedRecordings() {
         val first=manifest(recording,1);val f=Fixture(first,manifest(other,1));f.seed(first.first)

@@ -1,6 +1,37 @@
-# Public export checks — 2026-09-20
+# Public export checks — 2026-09-21
 
-## Source update: firmware 0.4.60 / Android 0.6.52
+## Source update: firmware 0.4.62 / Android 0.6.56
+
+Includes the previously unexported USB pairing, phone migration and new-key reset
+sources plus metadata-only recording sync. Private keys, factory backups, phone
+identifiers, device-specific operators and recording data remain excluded.
+
+- Development Android build: **682 JVM tests, zero failures/errors/skips**;
+  lint **0 errors / 34 warnings**. No integrity tests disabled.
+- Independently re-ran the exported Android source: **682 tests passed**;
+  lint **0 errors / 34 warnings**. Compared all **180 firmware, 118 Android main
+  and 81 JVM-test files** against the preserved release sources, permitting only
+  line-ending normalization. Public signing/build adaptations remain intact.
+- Audited **503 tracked source/document files** for private/generated paths,
+  credential/device-identifier patterns and valid local document links. This is
+  a targeted publication check, not a universal secret-detection guarantee.
+- Installed Android 0.6.56 with its verified original signer, preserving app data.
+  Production-controller details-only sync passed on the enrolled phone/pendant:
+  **one catalog request, zero audio reads/bytes, zero receipts/deletions**.
+  The physical catalog was empty; populated/paginated behavior was tested offline.
+- Exported production-C pairing/security tests: **253 assertions passed**;
+  recording-control/broker tests: **22 groups / 37,162 assertions passed**.
+- Firmware 0.4.62 is the preserved previously installed snapshot, not a new flash
+  in this task. Its earlier reset qualification includes **7,992 configuration
+  assertions** and **24 native-volume test groups** including interrupted formats.
+- Metadata-only work performed no recording, playback, NAND erase, key rotation
+  or firmware update. Prior reset qualification is described in
+  [phone setup and migration](PHONE_SETUP.md), including its physical limits.
+
+Published release downloads/tags remain firmware 0.4.57 / Android 0.6.49; this is
+a newer source commit, not a replacement binary release.
+
+## Historical source update: firmware 0.4.60 / Android 0.6.52
 
 The current export includes the battery-recovery changes and the physical
 five-tap pairing shortcut. Application sources match the final tested snapshots

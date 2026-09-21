@@ -119,8 +119,8 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
     val supportsBatterySync:Boolean get()=StorageSyncPower.supported(client.longPeer()?.capabilityBits ?: 0)
     val syncPowerMessage:String get()=StorageSyncPower.readyMessage(client.telemetry,client.connected,
         android.os.SystemClock.elapsedRealtime(),client.longPeer()?.capabilityBits ?: 0)
-    fun sync(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.NORMAL)
-    fun reviewQuickClear(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.INVENTORY_ONLY)
+    fun sync(peer: DurableConnectedPeer, content: RecordingSyncContent = transferPreferences.read().content) = storageSession(peer, content.mode)
+    fun reviewQuickClear(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.INVENTORY_ONLY, reviewForClear=true)
     fun finishPendingClear(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.DELETIONS_ONLY)
     fun quickClear(review: QuickClearReview, includePhone: Boolean) {
         if(clearReview !== review) return
@@ -133,7 +133,7 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
         storageSession(peer,DurableSyncMode.DELETIONS_ONLY,plan,!client.isCurrentRadioEpoch(peer.epoch))
     }
     private fun storageSession(peer: DurableConnectedPeer, requestedMode: DurableSyncMode,
-        clearPlan: BulkRecordingDeletion? = null, continueConnection: Boolean = false) {
+        clearPlan: BulkRecordingDeletion? = null, continueConnection: Boolean = false, reviewForClear: Boolean = false) {
         if (state.syncRefusal(peer) != null || busy || closed.get() || client.preferencesSave.busy) return
         // A pending-clear continuation performs its own fresh power/idle readback
         // after reconnect. All newly started transfers check power before work.
@@ -150,7 +150,7 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
         val selectedBinding = state.binding!!
         launch(DurableLibraryWork.SYNC) { job ->
             val syncStarted = android.os.SystemClock.elapsedRealtime()
-            syncEvidence = SyncRunEvidence(startedMillis=syncStarted)
+            syncEvidence = SyncRunEvidence(startedMillis=syncStarted, detailsOnly=requestedMode==DurableSyncMode.INVENTORY_ONLY)
             val binding = checkNotNull(AndroidDurableBinding.read(context))
             check(binding == selectedBinding)
             binding.requireVerifiedRecipient(AndroidDurableBinding.vault(context).summary())
@@ -229,6 +229,11 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                 }
                 val observer = object : DurableSyncObserver {
                     override fun recording(row: RecordingSyncSnapshot, position: Int, total: Int) {
+                        if (mode==DurableSyncMode.INVENTORY_ONLY) {
+                            publish(state.copy(transfer=null, recordings=state.recordings.filterNot { it.recording==row.recording }+row,
+                                message="Updating recording details · $position of $total · no audio download"))
+                            return
+                        }
                         meter.recording(row, position, total)
                         publish(state.copy(recordings = state.recordings.filterNot { it.recording == row.recording } + row))
                         display(true)
@@ -244,29 +249,34 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                     private var firstRead = true
                     private var lastSegment: SegmentIdentity? = null
                     override fun catalog(offset: Int, maximumEntries: Int, snapshotRevision: Long?, call: DurableSyncCall): DurableCatalogPage {
+                        syncEvidence=syncEvidence.copy(catalogCalls=syncEvidence.catalogCalls+1)
                         publish(state.copy(transfer=null,message="Reading the pendant’s recording list… Keep it nearby."))
                         val began = android.os.SystemClock.elapsedRealtime()
                         try { return actual.catalog(offset, maximumEntries, snapshotRevision, call) }
                         finally { syncEvidence=syncEvidence.copy(metadataMillis=syncEvidence.metadataMillis+android.os.SystemClock.elapsedRealtime()-began) }
                     }
                     override fun manifest(entry: DurableCatalogEntry, call: DurableSyncCall): DurableManifestReply {
+                        syncEvidence=syncEvidence.copy(manifestCalls=syncEvidence.manifestCalls+1)
                         val began = android.os.SystemClock.elapsedRealtime()
                         try { return actual.manifest(entry, call) }
                         finally { syncEvidence=syncEvidence.copy(metadataMillis=syncEvidence.metadataMillis+android.os.SystemClock.elapsedRealtime()-began) }
                     }
                     override fun receipt(segment: SegmentIdentity, call: DurableSyncCall): DurableReceiptReply {
+                        syncEvidence=syncEvidence.copy(receiptCalls=syncEvidence.receiptCalls+1)
                         val began = android.os.SystemClock.elapsedRealtime()
                         try { return actual.receipt(segment, call) }
                         finally { syncEvidence=syncEvidence.copy(receiptMillis=syncEvidence.receiptMillis+android.os.SystemClock.elapsedRealtime()-began) }
                     }
                     override fun receiptRange(manifest: RecordingManifest, first: Int, count: Int,
                         call: DurableSyncCall): DurableReceiptRangeReply {
+                        syncEvidence=syncEvidence.copy(receiptCalls=syncEvidence.receiptCalls+1)
                         val began = android.os.SystemClock.elapsedRealtime()
                         try { return actual.receiptRange(manifest, first, count, call) }
                         finally { syncEvidence=syncEvidence.copy(receiptMillis=syncEvidence.receiptMillis+android.os.SystemClock.elapsedRealtime()-began,
                             receiptBatches=syncEvidence.receiptBatches+1, batchedSegments=syncEvidence.batchedSegments+count) }
                     }
                     override fun read(segment: SegmentIdentity, offset: Long, maximumBytes: Int, call: DurableSyncCall): DurableRangeReply {
+                        syncEvidence=syncEvidence.copy(payloadCalls=syncEvidence.payloadCalls+1)
                         val began = android.os.SystemClock.elapsedRealtime()
                         val firstRange = lastSegment != segment
                         lastSegment = segment
@@ -283,8 +293,13 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                         meter.received(reply.chunk.bytes.size)
                         return reply
                     }
+                    override fun delete(intent: RecordingDeletionIntent, call: DurableSyncCall): DurableTombstoneReply {
+                        syncEvidence=syncEvidence.copy(deleteCalls=syncEvidence.deleteCalls+1)
+                        return actual.delete(intent,call)
+                    }
                 }
-                val session = DurableRecordingSyncSession(connection, transport, metadata, files, observer = observer, mode=mode)
+                val boundedTransport=if(mode==DurableSyncMode.INVENTORY_ONLY) MetadataOnlyRecordingTransport(transport) else transport
+                val session = DurableRecordingSyncSession(connection, boundedTransport, metadata, files, observer = observer, mode=mode)
                 job.sync = session; if (job.cancelled.get()) session.cancel()
                 try { result = session.run(); job.check() }
                 catch (failure: DurableSyncException) {
@@ -346,14 +361,16 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                 // successful durable transfer into a retry or metadata reset.
                 try { AndroidRecordingListTimes(context).rememberSync(beforeSync, metadata.snapshots(binding.volume.deviceId)) }
                 catch (_: Exception) { /* Date unavailable; recording remains authoritative. */ }
-                if(requestedMode==DurableSyncMode.INVENTORY_ONLY) {
+                if(requestedMode==DurableSyncMode.INVENTORY_ONLY && reviewForClear) {
                     val reviewed=QuickClearReview.create(binding.volume,result.catalogEntries,afterSync)
                     clearPeer=currentPeer;clearReviewedAt=android.os.SystemClock.elapsedRealtime();clearReview=reviewed
                     "Storage checked · ${reviewed.pendantCount} pendant recordings · ${reviewed.phoneCount} saved phone copies. Review Clear recordings in Settings. No audio downloaded or removed."
+                } else if(requestedMode==DurableSyncMode.INVENTORY_ONLY) {
+                    "Recording details updated · ${result.catalogRecords} recordings on pendant. No audio downloaded or recordings deleted."
                 } else if(verifyingClear) {
                     if(result.catalogEntries.isEmpty()) "Pendant recordings cleared and empty storage confirmed. Pairing and recording keys kept. Existing storage is reused; this is not a secure erase."
                     else "Selected removals confirmed, but ${result.catalogEntries.size} recordings remain on the pendant. Nothing outside the reviewed selection was deleted; check storage again."
-                } else "Last sync complete · ${result.catalogEntries.size} recordings found on pendant · $newlySaved new parts saved · ${SyncTransferProgress.formatBytes(received)} received · $deleted pendant deletions confirmed." +
+                } else "Last sync complete · ${result.catalogRecords} recordings found on pendant · $newlySaved new parts saved · ${SyncTransferProgress.formatBytes(received)} received · $deleted pendant deletions confirmed." +
                     if (result.pendingPhoneDeletion > 0) " ${result.pendingPhoneDeletion} phone deletion(s) need Resume deletion." else ""
             }
         }

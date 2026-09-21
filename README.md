@@ -35,7 +35,11 @@ have additional restrictions. This is not an official Limitless product.
 - Experimental offline whisper.cpp transcription, including Lithuanian, for the
   supported short-clip path. Long-recording transcription remains unfinished.
 
-Current source snapshot: **firmware 0.4.60-button-pairing**, **Android 0.6.52**.
+Current source snapshot: **firmware 0.4.62-key-reset**, **Android 0.6.56**.
+
+Recordings → Transfer now offers [details-only sync](docs/METADATA_SYNC.md):
+refresh the recording list without downloading audio or applying deletions.
+The source also includes [USB phone setup and recording-key migration](docs/PHONE_SETUP.md).
 The [five-tap pairing shortcut](docs/BUTTON_PAIRING.md) replaces the old phone
 bond and opens a blue-blinking, 60-second window. Secure passkey entry still
 needs USB; physical replacement qualification is pending.

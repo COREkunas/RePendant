@@ -119,6 +119,9 @@ int rv_extend_metadata(struct recording_volume *,uint64_t deadline);
  * parent, checked incremental erase steps, root and ACTIVE published last.
  * Phase2 after reset is intentionally not retried by this API. */
 int rv_provision_full(struct recording_volume *,const uint8_t confirmation[32],uint64_t deadline);
+/* Explicitly confirmed format/restart of an INACTIVE schema3 key-reset child.
+ * Never accepted for ACTIVE volumes. No automatic retry after lost replies. */
+int rv_erase_key_reset(struct recording_volume *,const uint8_t confirmation[32],uint64_t deadline);
 /* Explicit phase2 completion; never reformats. Requires valid native root,
  * and either complete RSM or wholly absent RSM. Partial metadata refuses. */
 int rv_complete_full(struct recording_volume *,const uint8_t confirmation[32],uint64_t deadline);

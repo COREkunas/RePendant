@@ -26,6 +26,10 @@ int settings_load_subtree_direct(const char*,int (*)(const char*,size_t,settings
 #define CONFIG_BT_LOG_SNIFFER_INFO 0
 #define CONFIG_BT_FIXED_PASSKEY 0
 #define CONFIG_BT_APP_PASSKEY 0
+#define CONFIG_BT_PRIVACY 0
+#define CONFIG_BT_ID_MAX 1
+#define BT_ADDR_LE_PUBLIC 0
+#define BT_ADDR_LE_RANDOM 1
 #define CONFIG_SETTINGS_NVS_SECTOR_SIZE_MULT 1
 #define CONFIG_SETTINGS_NVS_SECTOR_COUNT 8
 #define IS_ENABLED(x) (x)
@@ -71,7 +75,8 @@ typedef int bt_security_t;
 enum { BT_SECURITY_L1=1,BT_SECURITY_L2=2,BT_SECURITY_L3=3,BT_SECURITY_L4=4 };
 enum bt_security_err { BT_SECURITY_ERR_SUCCESS, BT_SECURITY_ERR_AUTH_REQUIREMENT,
  BT_SECURITY_ERR_PAIR_NOT_ALLOWED, BT_SECURITY_ERR_AUTH_FAIL };
-typedef struct { int value; } bt_addr_le_t;
+typedef struct { int value; uint8_t type; struct { uint8_t val[6]; } a; } bt_addr_le_t;
+void bt_id_get(bt_addr_le_t*,size_t*);
 struct bt_conn_info { int type, role, id, state; struct { bt_security_t level; uint8_t enc_key_size; int flags; } security; };
 struct bt_conn { struct bt_conn_info info; bt_addr_le_t address; int refs,disconnected,cancelled,set_security; };
 struct bt_bond_info { int unused; };

@@ -2,8 +2,21 @@ package org.openpendant.app
 
 import java.util.UUID
 
+enum class RecordingSyncContent(val storedValue: String) {
+    RECORDINGS_AND_AUDIO("audio"), DETAILS_ONLY("details");
+    val mode: DurableSyncMode get() = if (this == DETAILS_ONLY) DurableSyncMode.INVENTORY_ONLY else DurableSyncMode.NORMAL
+    companion object {
+        /** Existing installs retain full sync; an unknown saved choice never permits audio. */
+        fun fromStored(value: String?): RecordingSyncContent = when (value) {
+            null, "audio" -> RECORDINGS_AND_AUDIO
+            else -> DETAILS_ONLY
+        }
+    }
+}
+
 data class TransferPreferences(val automatic: Boolean = false, val removeAfterSync: Boolean = false,
-    val lowBattery: Boolean = false, val lowBatteryPercent: Int = 25)
+    val lowBattery: Boolean = false, val lowBatteryPercent: Int = 25,
+    val content: RecordingSyncContent = RecordingSyncContent.RECORDINGS_AND_AUDIO)
 
 /** Foreground-only, opt-in scheduling; no connection/enrollment or power-policy
  * override. One attempt per connection. A manual Stop is not an auto-retry. */

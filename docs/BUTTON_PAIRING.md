@@ -1,5 +1,9 @@
 # Physical pairing shortcut — firmware 0.4.60
 
+Historical qualification below is for 0.4.60. Newer source includes the direct
+phone USB setup path; see [USB setup and key migration](PHONE_SETUP.md). The
+physical five-tap gesture and its recording/power guards remain unchanged.
+
 While the pendant is idle, press and release its button **five times within
 3.5 seconds**, leaving less than half a second between taps. Do not hold it.
 The pendant removes its previous Bluetooth phone bond and opens a **60-second

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="usb_pair_title">Pair using USB</string>
+    <string name="usb_pair_instructions">Connect the pendant directly to this phone with a USB data cable (OTG if needed). Keep its battery connected.\n\nTap Pair, allow USB and Nearby devices, and keep the cable connected until pairing is confirmed. Android may show its own pairing prompt.</string>
+    <string name="usb_pair_ready">Ready for a wired pendant.</string>
+    <string name="usb_pair_start">Pair connected pendant</string>
+    <string name="usb_pair_back">Back</string>
+    <string name="usb_pair_enable_bluetooth">Enable Bluetooth, then tap Pair again.</string>
+    <string name="usb_pair_connect_one">Connect exactly one pendant using a data cable. The phone must be the USB host.</string>
+    <string name="usb_pair_permission">Allow this app to access the wired pendant.</string>
+</resources>

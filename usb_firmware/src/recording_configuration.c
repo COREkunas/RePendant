@@ -18,6 +18,8 @@ static uint8_t saved[CFG_BYTES],scratch[CFG_BYTES];
 static uint32_t initialized,fenced,present;
 int rcfg_is_full(const struct recording_configuration *c)
 {return c&&!memcmp(c->descriptor,"OPNDEX2\0",8);}
+int rcfg_is_key_reset(const struct recording_configuration *c)
+{return rcfg_is_full(c)&&c->spec.generation>=3&&!memcmp(c->descriptor+256,"OPNDKR1\0",8);}
 const uint8_t *rcfg_descriptor_digest(const struct recording_configuration *c)
 {return c?c->descriptor+(rcfg_is_full(c)?REX_DIGEST_OFFSET:352U):NULL;}
 void rcfg_extent_identity(const struct recording_configuration *c,struct recording_extent_identity *id)
@@ -72,7 +74,8 @@ static void spec_from_trusted_settings(struct owned_volume_spec *s,const uint8_t
 }
 static int decode(const uint8_t raw[CFG_BYTES],struct recording_configuration *out)
 {
- int full=!memcmp(raw,"OPNDNV2\0",8)&&sys_get_le16(raw+8)==2;
+ int rotation=!memcmp(raw,"OPNDNV3\0",8)&&sys_get_le16(raw+8)==3;
+ int full=rotation||(!memcmp(raw,"OPNDNV2\0",8)&&sys_get_le16(raw+8)==2);
  uint8_t sum[32];if((!full&&(memcmp(raw,magic,8)||sys_get_le16(raw+8)!=1))||sys_get_le16(raw+10)!=32||
   !zero(raw+28,4)||!zero(raw+609,7)||digest(raw,CFG_HASH_OFFSET,sum)||memcmp(sum,raw+CFG_HASH_OFFSET,32))return -EINVAL;
  memset(out,0,sizeof(*out));out->phase=sys_get_le32(raw+12);out->revision=sys_get_le64(raw+16);out->fault_banks=sys_get_le32(raw+24);
@@ -83,12 +86,25 @@ static int decode(const uint8_t raw[CFG_BYTES],struct recording_configuration *o
  memcpy(out->descriptor,raw+32,512);memcpy(out->recipient,raw+544,65);
  if(full){
   const uint8_t *d=out->descriptor;uint8_t device[16];
-  if(!zero(d+256,256)||rcfg_device_id(device))return -EINVAL;
+  if((!rotation&&!zero(d+256,256))||rcfg_device_id(device))return -EINVAL;
   memcpy(out->spec.device_id,d+16,16);memcpy(out->spec.volume_id,d+32,16);
   out->spec.generation=sys_get_le64(d+48);memcpy(out->spec.recipient_fingerprint,d+56,32);
   struct recording_extent_identity id;rcfg_extent_identity(out,&id);
-  if(memcmp(device,id.device_id,16)||id.generation!=2||recipient_valid(out->recipient,id.recipient_fingerprint)||
+  if(memcmp(device,id.device_id,16)||(rotation?(id.generation<3||id.generation>INT64_MAX):id.generation!=2)||recipient_valid(out->recipient,id.recipient_fingerprint)||
    rex_validate_full(d,&id,&hashing))return -EINVAL;
+  if(rotation){
+   /* The upper half is a config-only transition journal, not NAND descriptor
+    * bytes. The ordinary256B descriptor still binds every encrypted object.
+    * Reconstruct the exact parent, including its public point/fingerprint. */
+   struct recording_extent_identity parent=id;uint8_t descriptor[256];
+   memcpy(parent.volume_id,d+296,16);parent.generation=sys_get_le64(d+312);
+   memcpy(parent.recipient_fingerprint,d+320,32);
+   if(memcmp(d+256,"OPNDKR1\0",8)||d[417]!=1||!zero(d+418,94)||
+    parent.generation<2||parent.generation!=id.generation-1||
+    !memcmp(parent.volume_id,id.volume_id,16)||!memcmp(parent.recipient_fingerprint,id.recipient_fingerprint,32)||
+    recipient_valid(d+352,parent.recipient_fingerprint)||rex_build_full(descriptor,&parent,&hashing)||
+    memcmp(descriptor+224,d+264,32))return -EINVAL;
+  }
   return 0;
  }
  /* Only authenticated-by-location owner settings are a trust source here.
@@ -102,6 +118,7 @@ static int encode(const struct recording_configuration *value,uint8_t out[CFG_BY
 {
  memset(out,0,CFG_BYTES);memcpy(out,magic,8);sys_put_le16(1,out+8);sys_put_le16(32,out+10);
  if(rcfg_is_full(value)){memcpy(out,"OPNDNV2\0",8);sys_put_le16(2,out+8);}
+ if(rcfg_is_key_reset(value)){memcpy(out,"OPNDNV3\0",8);sys_put_le16(3,out+8);}
  sys_put_le32(value->phase,out+12);sys_put_le64(value->revision,out+16);sys_put_le32(value->fault_banks,out+24);
  memcpy(out+32,value->descriptor,512);memcpy(out+544,value->recipient,65);return digest(out,CFG_HASH_OFFSET,out+CFG_HASH_OFFSET);
 }
@@ -170,6 +187,28 @@ int rcfg_prepare_full(const uint8_t expected[32],const uint8_t volume[16])
  memcpy(next.spec.recipient_fingerprint,current.spec.recipient_fingerprint,32);memcpy(next.recipient,current.recipient,65);
  struct recording_extent_identity id;rcfg_extent_identity(&next,&id);
  if(rex_build_full(next.descriptor,&id,&hashing))return done(-EINVAL);
+ next.phase=RCFG_PREPARED;next.revision=1;return done(persist(&next));
+}
+int rcfg_prepare_key_reset(const uint8_t expected[32],const uint8_t volume[16],
+ const uint8_t fingerprint[32],const uint8_t recipient[65])
+{
+ if(!expected||!volume||!fingerprint||!recipient)return -EINVAL;
+ int rc=lock();if(rc)return rc;
+ if(!initialized||fenced||!present||current.phase!=RCFG_ACTIVE||current.fault_banks||
+  !rcfg_is_full(&current)||current.spec.generation<2||current.spec.generation>=INT64_MAX||
+  memcmp(rcfg_descriptor_digest(&current),expected,32)||!memcmp(current.spec.volume_id,volume,16)||
+  !memcmp(current.spec.recipient_fingerprint,fingerprint,32))return done(-EPERM);
+ if(recipient_valid(recipient,fingerprint))return done(-EINVAL);
+ struct recording_configuration next={0};
+ memcpy(next.spec.device_id,current.spec.device_id,16);memcpy(next.spec.volume_id,volume,16);
+ next.spec.generation=current.spec.generation+1;
+ memcpy(next.spec.recipient_fingerprint,fingerprint,32);memcpy(next.recipient,recipient,65);
+ struct recording_extent_identity id;rcfg_extent_identity(&next,&id);
+ if(rex_build_full(next.descriptor,&id,&hashing))return done(-EINVAL);
+ uint8_t *d=next.descriptor;memcpy(d+256,"OPNDKR1\0",8);
+ memcpy(d+264,rcfg_descriptor_digest(&current),32);memcpy(d+296,current.spec.volume_id,16);
+ sys_put_le64(current.spec.generation,d+312);memcpy(d+320,current.spec.recipient_fingerprint,32);
+ memcpy(d+352,current.recipient,65);d[417]=1; /* delete pendant only */
  next.phase=RCFG_PREPARED;next.revision=1;return done(persist(&next));
 }
 int rcfg_latch_fault(const uint8_t digest32[32],uint32_t bank)

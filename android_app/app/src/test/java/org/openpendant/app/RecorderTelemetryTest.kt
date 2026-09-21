@@ -4,7 +4,7 @@ import org.junit.Test
 
 class RecorderTelemetryTest {
     @Test fun everySupportedFullFirmwarePassesTheWireParserAndPresentationTogether() {
-        for(version in PendantStoragePresentation.FULL_FIRMWARE + setOf("0.4.56", "0.4.57")) {
+        for(version in PendantStoragePresentation.FULL_FIRMWARE + (56..62).map { "0.4.$it" }) {
             val p=packet();p[16]=version.substringAfterLast('.').toInt().toByte()
             p[53]=4;p[54]=32;p[56]=50;p[57]=0;p[58]=0;p[59]=20
             val value=DeviceTelemetry.parse(p)
@@ -33,7 +33,7 @@ class RecorderTelemetryTest {
         reject(p.copyOf().also { it[59]=19 })
     }
     @Test fun unknownFirmwareStillCannotAdvertiseKnownFullChipCapacity() {
-        for (version in listOf(28,47,48,61,99,255)) {
+        for (version in listOf(28,47,48,63,99,255)) {
             val p=packet();p[16]=version.toByte();p[53]=23;p[54]=32
             p[56]=979.toByte();p[57]=(979 shr 8).toByte();p[58]=0;p[59]=20
             reject(p)

@@ -161,6 +161,20 @@ class PendantClient(private val context: Context, private val listener: Listener
         private set
     var pairing = false
         private set
+    private var usbPairing = false
+    internal fun beginUsbPairing(): Boolean {
+        check(Looper.myLooper() === main.looper)
+        if (!alive || gatt != null || !radio.idle() || recording || pairing || usbPairing) return false
+        stopScan(); recovery.stop(); usbPairing = true; pairing = true
+        update("USB pairing in progress. No recording or transfer starts here.")
+        return true
+    }
+    internal fun endUsbPairing() {
+        check(Looper.myLooper() === main.looper)
+        if (!usbPairing) return
+        usbPairing = false; pairing = false
+        update("USB setup closed. Select the paired pendant and tap Connect when ready.")
+    }
     var progress = 0
         private set
     private var mtuNegotiation = MtuNegotiation()
@@ -175,6 +189,7 @@ class PendantClient(private val context: Context, private val listener: Listener
     private val bondReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+            if (usbPairing) return // The bounded wired setup owns this enrollment.
             @Suppress("DEPRECATION")
             val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
             if (device != selected) return

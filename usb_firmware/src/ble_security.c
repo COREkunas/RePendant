@@ -41,6 +41,11 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_STORE_DEBUG_KEYS));
 BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_LOG_SNIFFER_INFO));
 BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_FIXED_PASSKEY));
 BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_APP_PASSKEY));
+/* USB bootstrap binds the cable to the advertised identity, never to a name.
+ * If privacy is enabled later, implement authenticated identity resolution
+ * before allowing the phone to use this address for enrollment. */
+BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_PRIVACY));
+BUILD_ASSERT(CONFIG_BT_ID_MAX == 1);
 #define SETTINGS_PARTITION DT_CHOSEN(zephyr_settings_partition)
 BUILD_ASSERT(DT_SAME_NODE(SETTINGS_PARTITION, DT_NODELABEL(storage_partition)));
 BUILD_ASSERT(DT_REG_ADDR(SETTINGS_PARTITION) == 0xf8000);
@@ -497,10 +502,30 @@ static int command_replacement(const struct shell *sh,size_t argc,char **argv)
 	return 0;
 }
 
+static int command_usbinfo(const struct shell *sh,size_t argc,char **argv)
+{
+	ARG_UNUSED(argv);
+	if(sh!=shell_backend_uart_get_ptr()||argc!=1)return -EINVAL;
+	if(atomic_get(&init_result)!=0)return -EACCES;
+	bt_addr_le_t identity;
+	size_t count=1;
+	bt_id_get(&identity,&count);
+	if(count!=1 || (identity.type!=BT_ADDR_LE_PUBLIC && identity.type!=BT_ADDR_LE_RANDOM))return -EIO;
+	const uint8_t *a=identity.a.val;
+	if(!(a[0]|a[1]|a[2]|a[3]|a[4]|a[5]) ||
+	   (identity.type==BT_ADDR_LE_RANDOM && (a[5]&0xc0)!=0xc0))return -EIO;
+	/* Identity only: no bond keys, recording keys, flash reads or mutations. */
+	shell_print(sh,"PAIRING_USB_ID v=1 address=%02X:%02X:%02X:%02X:%02X:%02X type=%u",
+		(unsigned int)a[5],(unsigned int)a[4],(unsigned int)a[3],
+		(unsigned int)a[2],(unsigned int)a[1],(unsigned int)a[0],(unsigned int)identity.type);
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(pairing_subcommands,
 	SHELL_CMD_ARG(open, NULL, "Open one local 60-second pairing window: open confirm", command_open, 2, 0),
 	SHELL_CMD_ARG(status, NULL, "Show pairing state and active passkey locally", command_status, 1, 0),
 	SHELL_CMD_ARG(close, NULL, "Cancel pairing without deleting an existing bond", command_close, 1, 0),
 	SHELL_CMD_ARG(replacement, NULL, "Read last physical replacement result; no changes", command_replacement, 1, 0),
+	SHELL_CMD_ARG(usbinfo, NULL, "Read local Bluetooth identity for wired phone pairing", command_usbinfo, 1, 0),
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_REGISTER(pairing, &pairing_subcommands, "Local authenticated phone enrollment", NULL);

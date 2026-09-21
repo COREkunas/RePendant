@@ -85,11 +85,13 @@ internal class AndroidLongRecordingController(context: Context,private val clien
         polling?.let(main::removeCallbacks);polling=null
         changed()
         worker.execute {
+            var setupChecked = false
             try {
                 check(visible.get())
                 val binding=checkNotNull(AndroidDurableBinding.read(context))
                 check(selected.bondAddress==binding.bondAddress)
                 binding.requireVerifiedRecipient(AndroidDurableBinding.vault(context).summary())
+                setupChecked = true
                 if(session==null||peer!=selected){
                     session?.close();session=null
                     val intents=AndroidLongRecordingIntents.openOrCreateExplicit(context,binding);store=intents
@@ -126,8 +128,12 @@ internal class AndroidLongRecordingController(context: Context,private val clien
                     observation?.state?.phase==LongRecordingControlCodec.Phase.IDLE){session?.close();session=null}
             }catch(_:Throwable){
                 session?.close();session=null
-                message="Recording outcome is unknown. Reconnect and check status; Start was not retried. Closing Bluetooth does not stop the pendant."
-                observation=LongRecordingObservation(LongRecordingOutcome.UNKNOWN,observation?.state)
+                if (!setupChecked) {
+                    message="Recording setup is incomplete or needs attention. Open Settings → Move pendant / change recording key. No recording command was sent; any existing pendant recording is unchanged."
+                } else {
+                    message="Recording outcome is unknown. Reconnect and check status; Start was not retried. Closing Bluetooth does not stop the pendant."
+                    observation=LongRecordingObservation(LongRecordingOutcome.UNKNOWN,observation?.state)
+                }
             }finally{
                 working.set(false)
                 main.post {

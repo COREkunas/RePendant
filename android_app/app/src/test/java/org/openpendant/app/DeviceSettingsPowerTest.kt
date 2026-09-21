@@ -13,7 +13,9 @@ class DeviceSettingsPowerTest {
         assertNull(refusal());assertNull(StorageSyncPower.refusal(TimedDeviceTelemetry(value,1000),true,1001,32479))
         assertEquals(178257920L,PendantStoragePresentation.from(value)!!.totalBytes)
         assertNull(refusal(value.copy(firmware="0.4.60")))
-        for(v in listOf("0.4.56","0.4.61"))assertNotNull(refusal(value.copy(firmware=v)))
+        assertNull(refusal(value.copy(firmware="0.4.61")))
+        assertNull(refusal(value.copy(firmware="0.4.62")))
+        for(v in listOf("0.4.56","0.4.63"))assertNotNull(refusal(value.copy(firmware=v)))
         for(bits in listOf(0L,16095L,32478L,65247L))assertNotNull(refusal(bits=bits))
     }
     @Test fun lowStaleMissingOrUnsafePowerCannotSave() {

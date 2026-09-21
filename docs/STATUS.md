@@ -1,15 +1,17 @@
-# Development status — 2026-09-20
+# Development status — 2026-09-21
 
 This is an engineering snapshot, not a claim that every workflow is production
 ready. Results below refer to the owner's test pendant, not all PCB revisions.
 
 | Area | Evidence / current boundary |
 | --- | --- |
-| Firmware | 0.4.60-button-pairing installed; healthy idle startup with previous bond retained; also includes bounded calibration settling and deferred USB recovery |
-| Android | 0.6.52, versionCode 70 installed with original signer and app data retained; 634 JVM tests passed; lint 0 errors / 14 existing warnings |
+| Firmware | 0.4.62-key-reset installed; new-key pendant-only reset completed through PC-wired operator flow; empty storage survives restart; USB recovery and bond retained |
+| Android | 0.6.56, versionCode 74 installed with original signer/data retained; 682 JVM tests passed; lint 0 errors / 34 warnings |
 | Microphone | Intelligible mono PDM audio; five-minute real-mic recording/save/phone-transfer tests, including a battery interval |
 | Button | Start/stop without per-recording app approval after enrollment; standby wake and battery recording tested |
-| Five-tap pairing | New idle-only bond replacement, blue blink and 60-second window pass offline tests; physical gesture/new-bond durability pending; USB still needed to read the passkey |
+| Five-tap pairing / phone setup | Idle-only replacement and authenticated 60-second window retained; direct phone USB setup added; owner reported new-phone pairing; complete direct-phone USB migration/reset qualification remains |
+| Recording key migration | Keep-key import supported; new-key erase completed on one pendant with phone copies/backups retained; encrypted archive migration disabled/unimplemented |
+| Details-only sync | Physical empty-catalog check passed: 1 catalog call, 0 audio bytes/reads, receipts or deletions; populated/paginated fixtures passed offline; separate explicit pending-deletion completion |
 | Battery sync | Firmware 0.4.57 / app 0.6.48 battery-only settings and storage-sync/reconnect checks passed |
 | Latest Save UI | App 0.6.49 fixes status-read/save races, exact acknowledgement/readback and draft retention; actual UI tested on USB, not requalified battery-only |
 | Latest readiness/sync UI | App 0.6.51 retains battery-monitor warnings, distinguishes USB fallback from battery readiness, and identifies catalog-reading versus the last completed sync |
@@ -24,7 +26,8 @@ ready. Results below refer to the owner's test pendant, not all PCB revisions.
 
 Published downloads still contain app 0.6.49 and firmware 0.4.57; this source
 snapshot is newer. See [battery recovery evidence and limits](GAUGE_RECOVERY.md)
-and [pairing behavior and qualification limits](BUTTON_PAIRING.md).
+and [pairing behavior and qualification limits](BUTTON_PAIRING.md),
+[phone setup/key migration](PHONE_SETUP.md) and [details-only sync](METADATA_SYNC.md).
 The release APK and signed update are the preserved tested binaries. Public build
 configuration is adapted for independent developers; reproducible clean-build
 qualification and second-device testing are separate work, not implied by copying

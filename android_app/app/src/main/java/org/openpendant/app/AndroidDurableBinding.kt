@@ -28,16 +28,40 @@ object AndroidDurableBinding {
     private val monitor = Any()
     private const val NAMESPACE = "durable-enrollment-v1"
     private const val FULL_NAMESPACE = "durable-enrollment-full-v2"
+    private const val USB_NAMESPACE = "durable-enrollment-usb-v3"
+    private const val ROTATION_PREFIX = "durable-enrollment-key-v4-"
     fun read(context: Context): DurablePublicBinding? = synchronized(monitor) {
         worker()
+        var selected = readBase(context)
+        val roots = checkNotNull(context.noBackupFilesDir.listFiles()).filter { it.name.startsWith(ROTATION_PREFIX) }
+        check(roots.size <= 64)
+        val generations = roots.map { it.name.removePrefix(ROTATION_PREFIX).toLong().also { g -> check(g.toString() == it.name.removePrefix(ROTATION_PREFIX)) } }.sorted()
+        for (generation in generations) {
+            val previous = checkNotNull(selected)
+            val next = checkNotNull(readNamespace(context, ROTATION_PREFIX + generation))
+            requireKeyReset(previous, next); check(next.volume.generation == generation)
+            selected = next
+        }
+        selected
+    }
+    private fun readBase(context: Context): DurablePublicBinding? {
+        if (attributes(context.noBackupFilesDir.canonicalFile.toPath().resolve(USB_NAMESPACE)) != null) {
+            // Direct first enrollment for a replacement phone, not a fabricated
+            // generation1->2 history. Never shadow an existing legacy binding.
+            check(attributes(context.noBackupFilesDir.canonicalFile.toPath().resolve(NAMESPACE)) == null)
+            check(attributes(context.noBackupFilesDir.canonicalFile.toPath().resolve(FULL_NAMESPACE)) == null)
+            return checkNotNull(readNamespace(context, USB_NAMESPACE)).also {
+                check(it.volume.generation >= 2L)
+            }
+        }
         val old = readNamespace(context, NAMESPACE)
         val fullRoot = context.noBackupFilesDir.canonicalFile.toPath().resolve(FULL_NAMESPACE)
-        if (attributes(fullRoot) == null) return@synchronized old
+        if (attributes(fullRoot) == null) return old
         // Any partial new publication fences rather than silently falling back
         // to the obsolete volume. Original enrollment is retained unchanged.
         val full = checkNotNull(readNamespace(context, FULL_NAMESPACE))
         requireMigration(checkNotNull(old), full)
-        full
+        return full
     }
     private fun readNamespace(context: Context, namespace: String): DurablePublicBinding? {
         val root = context.noBackupFilesDir.canonicalFile.toPath().resolve(namespace)
@@ -72,13 +96,45 @@ object AndroidDurableBinding {
      * No production startup/connection code calls this entry point. */
     @SuppressLint("MissingPermission")
     fun enrollExplicit(context: Context, binding: DurablePublicBinding) = synchronized(monitor) {
+        check(attributes(context.noBackupFilesDir.canonicalFile.toPath().resolve(USB_NAMESPACE)) == null)
         publish(context, binding, NAMESPACE)
+    }
+    /** Only called after an explicit cable identity check and matching local
+     * backup import. Existing enrollment is immutable; no overwrite/recovery. */
+    fun enrollFromUsbExplicit(context: Context, binding: DurablePublicBinding) = synchronized(monitor) {
+        worker(); require(binding.volume.generation >= 2L)
+        val current = read(context)
+        if (current != null) {
+            check(current == binding)
+            binding.requireVerifiedRecipient(vaultFor(context, binding).summary())
+            requireBond(context, binding)
+        } else {
+            publish(context, binding, USB_NAMESPACE)
+            check(read(context) == binding)
+        }
+    }
+    private fun requireKeyReset(old: DurablePublicBinding, next: DurablePublicBinding) {
+        require(old.volume.generation >= 2 && old.volume.generation < Long.MAX_VALUE &&
+            next.volume.generation == old.volume.generation + 1 && old.volume.deviceId == next.volume.deviceId &&
+            old.volume.volumeId != next.volume.volumeId && old.bondAddress == next.bondAddress &&
+            old.recipientFingerprint != next.recipientFingerprint)
+    }
+    /** Cable-verified ACTIVE successor only; old enrollments/copies remain immutable. */
+    fun finishKeyResetExplicit(context: Context, old: DurablePublicBinding, next: DurablePublicBinding) = synchronized(monitor) {
+        worker(); requireKeyReset(old, next)
+        val current = read(context)
+        if (current == null || current == next) enrollFromUsbExplicit(context, next)
+        else {
+            check(current == old)
+            publish(context, next, ROTATION_PREFIX + next.volume.generation)
+            check(read(context) == next)
+        }
     }
     @SuppressLint("MissingPermission")
     private fun publish(context: Context, binding: DurablePublicBinding, namespace: String) {
         worker()
         requireBond(context, binding)
-        val vault = vault(context)
+        val vault = vaultFor(context, binding)
         binding.requireVerifiedRecipient(vault.summary())
         val parent = context.noBackupFilesDir.canonicalFile.toPath()
         val root = parent.resolve(namespace)
@@ -115,8 +171,9 @@ object AndroidDurableBinding {
         val bonded = context.getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices.orEmpty()
         check(bonded.any { it.address == binding.bondAddress && it.bondState == BluetoothDevice.BOND_BONDED })
     }
-    internal fun vault(context: Context) = RecipientKeyVault(AndroidRecipientVaultStorage(context, AndroidRecipientVaultOwner.monitor),
-        AndroidRecipientVaultWrapper(AndroidRecipientVaultOwner.monitor), JcaRecipientVaultGenerator(), AndroidRecipientVaultOwner.monitor)
+    internal fun vault(context: Context) = vaultFor(context, read(context))
+    internal fun vaultFor(context: Context, binding: DurablePublicBinding?) =
+        AndroidRecipientProfiles.selected(context, binding?.recipientFingerprint)
     private fun worker() { check(Looper.myLooper() != Looper.getMainLooper()) }
     internal fun attributes(path: Path): BasicFileAttributes? = try {
         Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
