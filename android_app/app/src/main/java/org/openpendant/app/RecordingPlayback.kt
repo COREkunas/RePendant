@@ -214,7 +214,7 @@ class RecordingPlayback private constructor(
         const val MAX_GAP_SAMPLES = 60L * 16000
         const val MAX_PENDING_FRAMES = 16000L
         const val STALL_MILLIS = 5000L
-        private fun authenticated(segment: SegmentIdentity, source: PlaybackCiphertextSource,
+        internal fun authenticated(segment: SegmentIdentity, source: PlaybackCiphertextSource,
                                   keys: PlaybackKeyAccess, current: () -> Unit): ByteArray {
             var answer: ByteArray? = null
             var callbacks = 0

@@ -143,7 +143,9 @@ class DurableRecordingSyncSession(private val connection: DurableSyncConnection,
     private val files: DurableSegmentStore,
     private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     private val observer: DurableSyncObserver = object : DurableSyncObserver {},
-    private val mode: DurableSyncMode = DurableSyncMode.NORMAL) {
+    private val mode: DurableSyncMode = DurableSyncMode.NORMAL,
+    private val selection: SelectedRecordingDownload? = null) {
+    init { require(selection == null || (mode == DurableSyncMode.NORMAL && selection.recording.volume == connection.volume)) }
     private val started = AtomicBoolean()
     private val cancelled = AtomicBoolean()
     fun cancel() { cancelled.set(true) }
@@ -230,11 +232,17 @@ class DurableRecordingSyncSession(private val connection: DurableSyncConnection,
             val old = metadata.snapshots(connection.volume.deviceId)
             require(old.size <= MAX_RECORDINGS && old.map { it.recording }.toSet().size == old.size)
             val current = old.filter { it.recording.volume == connection.volume }
+            selection?.let { selected ->
+                require(entries.singleOrNull { it.recording == selected.recording }?.let(selected::matches) == true)
+                require(current.singleOrNull { it.recording == selected.recording }?.let(selected::matches) == true)
+            }
             val work = LinkedHashSet<DurableRecordingId>()
-            if (mode != DurableSyncMode.DELETIONS_ONLY) entries.forEach { work.add(it.recording) }
+            if (mode != DurableSyncMode.DELETIONS_ONLY) entries.filter {
+                selection == null || it.recording == selection.recording
+            }.forEach { work.add(it.recording) }
             // Lost delete reply may remove the record from the remote catalog.
             // Dispatch its persisted outbox anyway; absence is not a tombstone.
-            current.filter { row -> mode != DurableSyncMode.INVENTORY_ONLY && row.deletions.any { it.pendant == PendantDeletion.PENDING } }
+            current.filter { row -> selection == null && mode != DurableSyncMode.INVENTORY_ONLY && row.deletions.any { it.pendant == PendantDeletion.PENDING } }
                 .forEach { work.add(it.recording) }
             require(work.size <= MAX_RECORDINGS)
             val engine = SegmentDownloadEngine(files, clockMillis)
@@ -264,6 +272,7 @@ class DurableRecordingSyncSession(private val connection: DurableSyncConnection,
                 try {
                     core.authenticatedConnection(connection.volume, true)
                     active()
+                    selection?.let { require(it.matches(core.snapshot())) }
                     val pending = core.nextPendantDeletion()
                     if (pending != null && mode != DurableSyncMode.INVENTORY_ONLY) {
                         if (!caps.tombstones) { unsupported++; continue }

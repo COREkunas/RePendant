@@ -11,6 +11,7 @@
  * permanent DMA memory and the external reservation. No mount/adoption/retry.
  * `controlstatus` and `controlpage index` read joined cached metadata only. */
 #include <stdint.h>
+int recording_runtime_battery_charging(void);
 #include "device_telemetry.h"
 /* `recorder phyprobe confirm` is a mutually exclusive one-shot diagnostic with
  * controlprobe: original PHY/HAL, fixed67652/67653 corrected reads,15s sampling

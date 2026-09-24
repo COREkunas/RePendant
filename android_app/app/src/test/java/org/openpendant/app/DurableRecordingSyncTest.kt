@@ -185,6 +185,58 @@ class DurableRecordingSyncTest {
         }
     }
 
+    private fun Fixture.download(selected:SelectedRecordingDownload)=DurableRecordingSyncSession(connection,
+        SelectedRecordingTransport(remote,selected),metadata,store,{now},selection=selected).run()
+    @Test fun selectedDownloadAfterDetailsOnlyLeavesOtherAudioAndDeletionsUntouched() {
+        val f=Fixture(manifest(recording,2),manifest(other,3))
+        f.runMode(DurableSyncMode.INVENTORY_ONLY)
+        f.metadata.change(other){it.requestDeletion(UUID(11,12),DeleteLocation.PENDANT_ONLY)}
+        val unchanged=f.metadata.rows.getValue(other)
+        val selected=checkNotNull(SelectedRecordingDownload.from(f.metadata.rows.getValue(recording)))
+        assertEquals(2,f.download(selected).segmentsPublished)
+        assertTrue(RecordingListPresentation.phoneComplete(f.metadata.rows.getValue(recording)))
+        assertEquals(unchanged,f.metadata.rows.getValue(other))
+        assertTrue(f.remote.reads.all { it.first.recording==recording })
+        assertTrue(f.remote.receipts.all { it.recording==recording });assertTrue(f.remote.deletes.isEmpty())
+    }
+    @Test fun selectedDownloadRejectsMissingChangedSuppressedOrQueuedTarget() {
+        for(kind in 0..3) {
+            val f=Fixture(manifest(recording),manifest(other));f.runMode(DurableSyncMode.INVENTORY_ONLY)
+            val selected=checkNotNull(SelectedRecordingDownload.from(f.metadata.rows.getValue(recording)))
+            when(kind) {
+                0 -> f.remote.manifests.remove(recording)
+                1 -> { val m=f.remote.manifests.getValue(recording);f.remote.manifests[recording]=RecordingManifest(recording,m.revision,true,"cd".repeat(32),m.segments) }
+                2 -> f.metadata.rows[recording]=f.metadata.rows.getValue(recording).copy(downloadSuppressed=true)
+                3 -> f.metadata.change(recording){it.requestDeletion(UUID(11,12),DeleteLocation.PENDANT_ONLY)}
+            }
+            assertThrows(DurableSyncException::class.java){f.download(selected)}
+            assertTrue(f.remote.reads.isEmpty());assertTrue(f.remote.receipts.isEmpty());assertTrue(f.remote.deletes.isEmpty())
+        }
+    }
+    @Test fun selectedDownloadResumesVerifiedPartsWithoutDownloadingOtherRecording() {
+        val f=Fixture(manifest(recording,3),manifest(other));f.runMode(DurableSyncMode.INVENTORY_ONLY)
+        val selected=checkNotNull(SelectedRecordingDownload.from(f.metadata.rows.getValue(recording)))
+        f.remote.before={name,_->if(name=="read"&&f.remote.receipts.size==1)error("Synthetic link loss")}
+        assertThrows(DurableSyncException::class.java){f.download(selected)}
+        assertEquals(1,f.metadata.rows.getValue(recording).phoneSegments.size)
+        f.remote.before={_,_->};f.remote.reads.clear()
+        assertEquals(2,f.download(selected).segmentsPublished)
+        assertTrue(f.remote.reads.all { it.first.recording==recording && it.first.sequence>0 })
+        assertTrue(f.metadata.rows.getValue(other).phoneSegments.isEmpty())
+    }
+    @Test fun selectedGuardRefusesOtherRecordsAndEveryDeletionBeforeTransport() {
+        val one=manifest(recording);val two=manifest(other);val f=Fixture(one,two)
+        f.runMode(DurableSyncMode.INVENTORY_ONLY)
+        val selected=checkNotNull(SelectedRecordingDownload.from(f.metadata.rows.getValue(recording)))
+        val guard=SelectedRecordingTransport(f.remote,selected);val call=checkNotNull(f.remote.lastCall)
+        f.metadata.change(other){it.requestDeletion(UUID(11,12),DeleteLocation.PENDANT_ONLY)}
+        val before=f.remote.calls.toList();val segment=two.first.segments.first()
+        assertThrows(IllegalArgumentException::class.java){guard.read(segment,0,256,call)}
+        assertThrows(IllegalArgumentException::class.java){guard.receipt(segment,call)}
+        assertThrows(IllegalArgumentException::class.java){guard.receiptRange(two.first,0,1,call)}
+        assertThrows(IllegalStateException::class.java){guard.delete(f.metadata.rows.getValue(other).deletions.single(),call)}
+        assertEquals(before,f.remote.calls)
+    }
     @Test fun inventoryFindsEveryPageWithoutPayloadReceiptOrDeletion() {
         val f=Fixture(manifest(recording,3),manifest(other,2))
         val result=f.runMode(DurableSyncMode.INVENTORY_ONLY)

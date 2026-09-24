@@ -20,5 +20,7 @@ int mic_commands_ble_capture(struct mic_pcm_store_info *info);
 /* Implemented by the main application; indicator cannot be overridden by BLE
  * while a diagnostic is active. No microphone starts if the indicator fails. */
 int pendant_audio_indicator(bool enabled);
+int pendant_recording_prepare(bool enabled);
+void pendant_recording_confirm(bool started);
 bool pendant_recovery_is_pending(void);
 #endif

@@ -1,0 +1,4 @@
+<!-- Lucide battery outline. See assets/lucide-LICENSE.txt. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#D9FF53" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M22,14L22,10M4,6H16A2,2 0,0 1,18,8V16A2,2 0,0 1,16,18H4A2,2 0,0 1,2,16V8A2,2 0,0 1,4,6Z" />
+</vector>

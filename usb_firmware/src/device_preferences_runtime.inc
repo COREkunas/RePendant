@@ -10,6 +10,8 @@ static struct {
  uint8_t bytes[DP_BYTES];
 } dp_pending;
 static uint64_t dp_idle_since;
+static uint64_t dp_blink_began;
+static unsigned dp_blink_count;
 static uint16_t dp_adv_units=48;
 K_MUTEX_DEFINE(dp_adv_lock);
 
@@ -42,7 +44,7 @@ static void dp_initialize(void)
  int rc=dp_read_saved(saved);
  k_spinlock_key_t key=k_spin_lock(&dp_lock);
  if(rc<0){dp_defaults(dp_applied);atomic_set(&dp_failed,1);}
- else memcpy(dp_applied,saved,DP_BYTES);
+ else {memcpy(dp_applied,saved,DP_BYTES);dp_upgrade(dp_applied);}
  atomic_set(&dp_ready,1);k_spin_unlock(&dp_lock,key);
  dp_idle_since=(uint64_t)k_uptime_get();
 }
@@ -99,9 +101,28 @@ static void dp_process(void)
 static int dp_indicator(bool enabled)
 {
  uint8_t p[DP_BYTES],rgb[3];dp_copy(p);
+ k_spinlock_key_t key=k_spin_lock(&dp_lock);dp_blink_count=0;k_spin_unlock(&dp_lock,key);
  atomic_set(&dp_recording,enabled?1:0);
  dp_color(p,enabled?DP_RECORDING:DP_OFF,(uint64_t)k_uptime_get(),rgb);
  return set_rgb_guarded(rgb[0],rgb[1],rgb[2],true);
+}
+/* Managed recorder only. Legacy explicit diagnostics retain their steady LED.
+ * Preparation is not a successful-start confirmation. No wait/flash/audio I/O. */
+int pendant_recording_prepare(bool enabled)
+{
+ uint8_t p[DP_BYTES],rgb[3];dp_copy(p);
+ k_spinlock_key_t key=k_spin_lock(&dp_lock);dp_blink_count=0;
+ atomic_set(&dp_recording,enabled?2:0);k_spin_unlock(&dp_lock,key);
+ dp_color(p,enabled&&!p[10]?DP_RECORDING:DP_OFF,(uint64_t)k_uptime_get(),rgb);
+ return set_rgb_guarded(rgb[0],rgb[1],rgb[2],true);
+}
+void pendant_recording_confirm(bool started)
+{
+ k_spinlock_key_t key=k_spin_lock(&dp_lock);
+ if(started)atomic_set(&dp_recording,3);
+ dp_blink_count=dp_applied[10]?(started?3U:2U):0U;
+ dp_blink_began=(uint64_t)k_uptime_get();
+ k_spin_unlock(&dp_lock,key);
 }
 static void dp_policy_tick(void)
 {
@@ -109,6 +130,29 @@ static void dp_policy_tick(void)
 #ifdef OPENPENDANT_STANDALONE_CONTROL
  dp_standby_requested=false;
 #endif
+ k_spinlock_key_t led_key=k_spin_lock(&dp_lock);
+ unsigned pulses=dp_blink_count;uint64_t began=dp_blink_began;
+ int managed=atomic_get(&dp_recording)>=2;
+ k_spin_unlock(&dp_lock,led_key);
+ if(managed||pulses){
+  int blink=dp_blink(pulses,began,now);
+  enum dp_event event=DP_OFF;
+  if(atomic_get(&dp_failed)||recording_runtime_faulted())event=DP_FAULT;
+  else if((!p[10]&&managed)||blink==1)event=DP_RECORDING;
+  dp_color(p,event,now,rgb);
+  /* Worker transitions may interleave; next tick recomputes latest state.
+   * Diagnostic guard permits PWM while the managed microphone owner is held. */
+  if(k_mutex_lock(&rgb_lock,K_NO_WAIT)==0){
+   bool changed=!rgb_known||memcmp(rgb_applied,rgb,3);k_mutex_unlock(&rgb_lock);
+   if(changed)(void)set_rgb_guarded(rgb[0],rgb[1],rgb[2],true);
+  }
+  if(pulses&&blink<0){
+   led_key=k_spin_lock(&dp_lock);
+   if(dp_blink_count==pulses&&dp_blink_began==began)dp_blink_count=0;
+   k_spin_unlock(&dp_lock,led_key);
+  }
+  dp_idle_since=now;return;
+ }
  unsigned int pairing_ms=pendant_ble_pairing_remaining_ms();
  if(pairing_ms&&!atomic_get(&dp_recording)&&!mic_commands_busy()&&!pendant_recovery_is_pending()){
   /* Explicit pairing indication cannot be disabled by cosmetic preferences.
@@ -134,6 +178,7 @@ static void dp_policy_tick(void)
   else {struct battery_telemetry b;recording_runtime_battery_telemetry(&b);
    if((b.flags&1)&&b.soc<=p[8])event=DP_LOW;}
 #endif
+  if(event==DP_OFF&&p[11]&&recording_runtime_battery_charging())event=DP_CHARGING;
   if(event==DP_OFF&&atomic_get(&dp_connected))event=DP_CONNECTED;
   if(event==DP_OFF&&atomic_get(&dp_usb))event=DP_USB;
   dp_color(p,event,now,rgb);

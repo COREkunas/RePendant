@@ -17,7 +17,8 @@ import java.util.Date
  * Workers independently repeat all identity, integrity and operation gates. */
 internal class DurableLibrarySection(private val activity: Activity, private val controller: AndroidDurableLibrary,
     private val peer: () -> DurableConnectedPeer?, private val legacyBusy: () -> Boolean,
-    private val beforePlay: () -> Unit, private val recovery: () -> Unit) {
+    private val beforePlay: () -> Unit, private val recovery: () -> Unit,
+    private val cloud:MindyLinkController?=null,private val mindy:MindyLinkSection?=null) {
     private val ink=Color.rgb(246,247,242)
     private val muted=Color.rgb(142,152,166)
     private val green=Color.rgb(85,215,139)
@@ -171,8 +172,9 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         val active=controller.player
         val signature=state.recordings.joinToString { "${it.recording}:${it.revision}" }+
             ":${state.work}:${state.recipientReady}:${state.needsAttention}:${legacyBusy()}:${controller.busy}:$shown:$query:$filter:${state.firstSyncedTimes}:$expanded:${active?.recording}:${active?.snapshot()?.playing}"
-        if(signature==rendered)return
-        rendered=signature;rows.removeAllViews();players.clear()
+        val cloudSignature=signature+":"+(cloud?.version?:0)+":"+(cloud?.busy?:false)+":$refusal:${current?.epoch}"
+        if(cloudSignature==rendered)return
+        rendered=cloudSignature;rows.removeAllViews();players.clear()
         val matching=filtered
         listSummary.stableText="${matching.size} recordings"+(if(filter==RecordingListFilter.HISTORY)" · empty recordings" else "")
         listSummary.visibility=if(query.isBlank()&&filter!=RecordingListFilter.HISTORY)View.GONE else View.VISIBLE
@@ -234,19 +236,36 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         val header=LinearLayout(activity).apply {
             tag="recording-expander";orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;minimumHeight=dp(52)
             isClickable=true;isFocusable=true
-            contentDescription="${dateLabel(row)}, ${title(row)}, ${RecordingListPresentation.pendantLabel(row)}, ${RecordingListPresentation.phoneLabel(row)}, not transcribed, ${if(open)"expanded" else "collapsed"}"
+            contentDescription="${dateLabel(row)}, ${title(row)}, ${RecordingListPresentation.pendantLabel(row)}, ${RecordingListPresentation.phoneLabel(row)}, ${if(cloud?.transcript(row)!=null)"transcribed" else "not transcribed"}, ${if(open)"expanded" else "collapsed"}"
             setOnClickListener { if(!expanded.add(row.recording))expanded.remove(row.recording);rendered="";render(lastQuery) }
         }
-        header.addView(text(dateLabel(row),14,ink,true),LinearLayout.LayoutParams(0,-2,1f))
+        val name=cloud?.names?.get(MindyLinkStore.recordingKey(row.recording))
+        header.addView(text(if(name==null)dateLabel(row) else "$name\n${dateLabel(row)}",14,ink,true),LinearLayout.LayoutParams(0,-2,1f))
         header.addView(dot(green,!row.staleVolume&&row.pendantCopy==PendantCopy.PRESENT,RecordingListPresentation.pendantLabel(row)+", last synced"))
         header.addView(dot(blue,RecordingListPresentation.hasPhoneCopy(row),RecordingListPresentation.phoneLabel(row)))
-        header.addView(dot(orange,false,"Not transcribed"));header.addView(text(if(open)"  ▴" else "  ▾",18,muted));item.addView(header)
+        header.addView(dot(orange,cloud?.transcript(row)!=null,if(cloud?.transcript(row)!=null)"Transcribed" else "Not transcribed"));header.addView(text(if(open)"  ▴" else "  ▾",18,muted));item.addView(header)
         if(!open)return
         item.addView(text(title(row),15,ink,true))
         item.addView(text("${RecordingListPresentation.pendantLabel(row)} · last sync\n${RecordingListPresentation.phoneLabel(row)}",12,muted))
         if(row.staleVolume)item.addView(text("From older pendant storage. Phone copies can be deleted; the current pendant storage is unchanged.",12,coral))
         if(row.pendingReceipts.isNotEmpty())item.addView(text("Phone saved · receipt awaiting sync",12,muted))
-        addPlayer(item,row);item.addView(button("Recording details") { showDetails(row) });addDeletion(item,row)
+        SelectedRecordingDownload.from(row)?.let { selected ->
+            item.addView(button(if(row.phoneSegments.isEmpty())"Download this recording" else "Resume this download") {
+                confirmDownload(row,selected)
+            }.apply { tag="download-selected-recording";isEnabled=!controller.busy&&!legacyBusy()&&controller.syncRefusal(peer())==null })
+        }
+        addPlayer(item,row);mindy?.recordingActions(item,row,controller.state.playable(row)&&!controller.busy&&!legacyBusy())
+        item.addView(button("Recording details") { showDetails(row) });addDeletion(item,row)
+    }
+    private fun confirmDownload(row:RecordingSyncSnapshot,selected:SelectedRecordingDownload) {
+        val connected=peer() ?: return
+        if(controller.busy||legacyBusy()||controller.syncRefusal(connected)!=null)return
+        AlertDialog.Builder(activity).setTitle("Download this recording?")
+            .setMessage("${title(row)}\n${dateLabel(row)}\n\nOnly this recording’s audio will be downloaded. Its pendant copy is kept. Your details-only setting and all other recordings stay unchanged.")
+            .setNegativeButton("Cancel",null).setPositiveButton("Download") { _,_->
+                if(peer()==connected&&!controller.busy&&!legacyBusy()&&controller.syncRefusal(connected)==null)
+                    controller.download(connected,selected)
+            }.show()
     }
     private fun addPlayer(item:LinearLayout,row:RecordingSyncSnapshot) {
         val duration=RecordingListPresentation.audioMillis(row)?:0
@@ -347,6 +366,7 @@ internal class DurableLibrarySection(private val activity: Activity, private val
                 if(!controller.busy&&!legacyBusy())controller.delete(row.recording,location,keepTranscript)
             }.show()
     }
+    fun requestSync() = confirmSync()
     private fun confirmSync(deletionsOnly:Boolean=false) {
         if(controller.busy||legacyBusy())return
         val selected=try{peer()}catch(_:Exception){null}
@@ -373,13 +393,13 @@ internal class DurableLibrarySection(private val activity: Activity, private val
         AlertDialog.Builder(activity).setTitle(title(row)).setMessage("${dateLabel(row)}\n\n"+
             "${row.phoneSegments.size}/${row.manifest?.segments?.size?:0} parts on phone\n\n"+
             "First synced is the transfer date, not the recording date. Older recording dates were not saved. Duration excludes gaps; playback stops at missing audio.\n\n"+
-            "Transcription for these long recordings is not available yet. The orange indicator stays off.\n\nID: ${row.recording.recordingId}")
+            "Optional PC transcription is available through MindyLink. Orange means a saved phone transcript. PC jobs have separate removal controls.\n\nID: ${row.recording.recordingId}")
             .setPositiveButton("Close",null).show()
     }
     private fun dateLabel(row:RecordingSyncSnapshot)=controller.state.firstSyncedTimes[row.recording]?.let {
         "First synced "+DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(Date(it))
     }?:"Date not recorded\n#${row.recording.recordingId.toString().takeLast(8)}"
-    private fun title(row:RecordingSyncSnapshot)=RecordingListPresentation.title(row)
+    private fun title(row:RecordingSyncSnapshot)=cloud?.names?.get(MindyLinkStore.recordingKey(row.recording))?:RecordingListPresentation.title(row)
     private fun dp(value:Int)=(value*activity.resources.displayMetrics.density).toInt()
     private fun column()=LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL }
     private fun dot(color:Int,lit:Boolean,description:String)=View(activity).apply {

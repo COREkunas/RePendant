@@ -44,7 +44,8 @@ class BatteryTelemetryTest {
         assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=61 })))
         assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=62 })))
         assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=62;word(it,48,512+2+4+8+16+32) })))
-        reject(p.copyOf().also { it[16]=63 })
+        assertEquals(storage,PendantStoragePresentation.from(DeviceTelemetry.parse(p.copyOf().also { it[16]=63 })))
+        reject(p.copyOf().also { it[16]=64 })
         reject(p.copyOf().also { word(it,40,0x1e8) })
         reject(p.copyOf().also { word(it,58,5119) })
     }

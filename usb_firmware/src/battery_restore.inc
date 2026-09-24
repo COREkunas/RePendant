@@ -8,15 +8,20 @@ struct restore_actor {
  int (*allow)(void*);
  void *user;
  int64_t begin;
+ unsigned sample_only;
 };
 static int restore_transfer(struct restore_actor *a,const uint8_t *data,unsigned nt,
                             uint8_t *dest,unsigned nr)
 {
  if(!nt || nt>sizeof(tx) || nr>sizeof(rx) || !data || (nr && !dest) || fault ||
     !stopped || !released)return -EPERM;
- /* Two seconds before EVERY transfer satisfies standard-command pacing,
-  * Control result settling and the 1100ms SET_CFGUPDATE minimum. */
- k_msleep(2000);
+ /* Restore/control writes keep their established 2s settling. Only the fixed
+  * read-only sample uses the 1s pacing already proven by battery_probe_run.
+  * Six reads/6s keep the oldest observation within the unchanged20s gate;
+  * adding current at2s would create recurrent stale safety samples. */
+ if(a->sample_only&&(nt!=1||nr!=2||!((data[0]==6)||(data[0]==4)||
+    (data[0]==0x10)||(data[0]==0x1c)||(data[0]==0x1e))))return -EPERM;
+ k_msleep(a->sample_only?1000:2000);
  if(!a->allow(a->user) || k_uptime_get()-a->begin>=170000)return -ECANCELED;
  if(!idle()){stopped=released=0;fault=1;return -EBUSY;}
  released=0;
@@ -180,7 +185,7 @@ int battery_restore_run(struct battery_restore_result *out,int (*allow)(void*),v
  if(!out || !allow)return -EINVAL;
  if(!atomic_cas(&used,0,1))return -EALREADY;
  memset(out,0,sizeof(*out));out->attempted=1;
- struct restore_actor a={out,allow,user,k_uptime_get()};
+ struct restore_actor a={out,allow,user,k_uptime_get(),0};
  int rc=-EPERM;
  if(!allow(user))goto finish;
  if(!idle()){stopped=released=0;fault=1;goto finish;}

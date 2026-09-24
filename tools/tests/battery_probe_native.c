@@ -11,7 +11,8 @@ static unsigned transfer_delay,stop_delay,failure,fail_at,active,stop_active,can
 static unsigned preemption_us;
 static uint16_t words[3];
 static unsigned restore_mode,model_case,model_key,model_cfg,model_sealed,model_subclass;
-static uint16_t model_cmd,model_flags;
+static uint16_t model_cmd,model_flags,model_current;
+static unsigned last_sleep_ms;
 static unsigned model_cca_reads,model_status_skip;
 static uint16_t model_status_extra;
 static uint8_t model_state[32],model_gain[32],model_stage[32];
@@ -42,7 +43,7 @@ static void advance(void)
 }
 void k_busy_wait(uint32_t u){CHECK(u==1||u==5);time_us+=u;
  if(active&&preemption_us){time_us+=preemption_us;preemption_us=0;}advance();}
-void k_msleep(int32_t m){CHECK(m==(restore_mode?2000:1000)&&!active&&!stop_active);++sleeps;time_us+=(uint64_t)m*1000;}
+void k_msleep(int32_t m){CHECK(m==((restore_mode&&!service_ready)?2000:1000)&&!active&&!stop_active);last_sleep_ms=(unsigned)m;++sleeps;time_us+=(uint64_t)m*1000;}
 uint32_t nrf_gpio_pin_read(uint32_t p){CHECK(p==38||p==46);return failure!=LINES_LOW;}
 uint32_t nrf_gpio_pin_out_read(uint32_t p){return output[p];}
 void nrf_gpio_pin_set(uint32_t p){CHECK(p==38||p==46);++writes;output[p]=1;}
@@ -72,7 +73,7 @@ void nrf_twim_task_trigger(NRF_TWIM_Type*p,unsigned task)
   CHECK((restore_mode||starts<3)&&!active&&!stop_active&&p->ENABLE==6&&p->ADDRESS==0x55);
   if(!restore_mode)CHECK(p->TXD.MAXCNT==1&&p->RXD.MAXCNT==2&&tx[0]==selectors[starts]);
   CHECK(sleeps==starts+1&&p->SHORTS==(p->RXD.MAXCNT?BP_SHORTS:4));
-  if(starts)CHECK(time_us-start_us>=(restore_mode?2000000U:1000000U));
+  if(starts)CHECK(time_us-start_us>=(uint64_t)last_sleep_ms*1000U);
   ++starts;start_us=time_us;active=1;
  }else{CHECK(task==NRF_TWIM_TASK_STOP&&p->SHORTS==0);++stops;stop_us=time_us;stop_active=1;}
 }

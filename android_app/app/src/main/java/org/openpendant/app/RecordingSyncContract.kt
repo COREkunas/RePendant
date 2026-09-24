@@ -206,13 +206,22 @@ class RecordingSyncContract(
     /** Explicit local playback only. All sealed segments, the final catalog and
      * its complete identity are pinned for this job. No network/key/audio action. */
     fun beginPlayback(manifest: RecordingManifest, startSequence: Int = 0): RecordingWorkTicket = synchronized(lock) {
+        beginCompleteLocalWork(manifest,startSequence,RecordingWork.PLAYBACK)
+    }
+
+    /** Pins a complete immutable phone copy for an explicitly authorized bounded
+     * remote export. No network operation is performed under this lock. */
+    internal fun beginTranscription(manifest:RecordingManifest):RecordingWorkTicket = synchronized(lock) {
+        beginCompleteLocalWork(manifest,0,RecordingWork.TRANSCRIPTION)
+    }
+    private fun beginCompleteLocalWork(manifest:RecordingManifest,startSequence:Int,kind:RecordingWork):RecordingWorkTicket {
         checkNotPublishing()
         require(active == null && !pendingDeletion() && !state.downloadSuppressed && !state.staleVolume)
         require(manifest == state.manifest && manifest.finished && manifest.recording == state.recording &&
             startSequence in manifest.segments.indices && state.phoneSegments.containsAll(manifest.segments))
         val generation = increment(state.workGeneration)
         update(state.copy(workGeneration = generation))
-        RecordingWorkTicket(manifest.segments[startSequence], RecordingWork.PLAYBACK, generation,
+        return RecordingWorkTicket(manifest.segments[startSequence], kind, generation,
             instance, UUID.randomUUID(), manifest).also { active = it }
     }
 
@@ -222,14 +231,14 @@ class RecordingSyncContract(
      * Already queued samples must be flushed by the session/deletion adapter. */
     internal fun playbackStep(ticket: RecordingWorkTicket, action: () -> Unit): Boolean = synchronized(lock) {
         checkNotPublishing()
-        if (!current(ticket) || ticket.finalManifest == null) return@synchronized false
+        if (!current(ticket) || ticket.finalManifest == null || ticket.kind != RecordingWork.PLAYBACK) return@synchronized false
         publishing = true
         try { action(); true } finally { publishing = false }
     }
 
     internal fun finishPlayback(ticket: RecordingWorkTicket): Boolean = synchronized(lock) {
         checkNotPublishing()
-        if (!current(ticket) || ticket.finalManifest == null) return@synchronized false
+        if (!current(ticket) || ticket.finalManifest == null || ticket.kind != RecordingWork.PLAYBACK) return@synchronized false
         active = null
         true
     }
@@ -391,7 +400,7 @@ class RecordingSyncContract(
 
     private fun current(ticket: RecordingWorkTicket): Boolean = !closed && !reconciliationRequired && active === ticket && ticket.instance == instance &&
         ticket.generation == state.workGeneration && knownSegment(ticket.segment) && !pendingDeletion() &&
-        (ticket.finalManifest == null || (ticket.kind == RecordingWork.PLAYBACK && playbackStateValid(ticket.finalManifest))) &&
+        (ticket.finalManifest == null || (ticket.kind in setOf(RecordingWork.PLAYBACK,RecordingWork.TRANSCRIPTION) && playbackStateValid(ticket.finalManifest))) &&
         (ticket.kind != RecordingWork.DOWNLOAD || (connection != null && !state.staleVolume && !state.downloadSuppressed))
 
     private fun playbackStateValid(manifest: RecordingManifest): Boolean {

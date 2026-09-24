@@ -1,0 +1,4 @@
+<!-- Lucide circle with fill for connected/offline status. See assets/lucide-LICENSE.txt. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#D9FF53" android:pathData="M2,12A10,10 0,1 0,22,12A10,10 0,1 0,2,12" />
+</vector>

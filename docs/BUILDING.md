@@ -20,6 +20,9 @@ python tools/verify_opus_integration.py --source-only
 This explicitly downloads the official Opus 1.6.1 source archive and the pinned
 whisper.cpp v1.9.4 checkout. It verifies hashes/revision and does not overwrite
 existing sources or fetch models. SDK/Gradle dependencies are separate downloads.
+Android 0.6.62 also resolves OkHttp 4.12.0 and the JSON-java 20240303 JVM-test
+dependency through Gradle. A first build needs network access to resolve missing
+dependencies; `--offline` works only after they are cached.
 
 ## Android
 
@@ -107,6 +110,7 @@ the repository root:
 
 ```console
 python tools/test_battery_probe.py
+python tools/test_device_preferences.py
 ```
 
 This compiles the production battery probe with mocked registers and time. It
@@ -114,6 +118,9 @@ checks calibration settling, bounded failure/cancellation and deferred gauge
 initialization without connecting to a device. It is not electrical or runtime
 power-consumption qualification. Android JVM tests above cover the companion
 readiness and sync-message changes.
+The preference regression checks LED policy, schema migration and mocked NVS
+persistence, including recording pulses and independent charging indication.
+Neither test measures physical LED timing or current consumption.
 
 ## Offline pairing and recording-control regression
 

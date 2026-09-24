@@ -24,12 +24,24 @@ class DevicePreferencesTest {
         assertEquals(0,DevicePreferences.decode(DevicePreferences(connected=0,usb=0).encode()).connected)
     }
     @Test fun malformedFieldsFailClosed() {
-        for((index,value) in listOf(0 to 2,1 to 3,2 to 7,2 to 65,3 to 8,4 to 8,5 to 8,6 to 8,
+        for((index,value) in listOf(0 to 3,1 to 3,2 to 7,2 to 65,3 to 8,4 to 8,5 to 8,6 to 8,
             7 to 8,8 to 19,8 to 51,9 to 4,10 to 1,11 to 1)) {
             val data=DevicePreferences().encode();data[index]=value.toByte()
             assertTrue("field $index value $value",runCatching { DevicePreferences.decode(data) }.isFailure)
         }
         for(size in listOf(0,15,17))assertTrue(runCatching { DevicePreferences.decode(ByteArray(size)) }.isFailure)
+    }
+    @Test fun schemaTwoPersistsHiddenModeChargingAndAcknowledgesExactly() {
+        val p=DevicePreferences(schema=2,recordingBehavior=1,charging=5,recording=3,revision=81)
+        assertEquals(2,p.encode()[0].toInt());assertEquals(1,p.encode()[10].toInt());assertEquals(5,p.encode()[11].toInt())
+        assertEquals(p,DevicePreferences.decode(p.encode()))
+        assertEquals(p.copy(revision=82),DevicePreferences.accepted(p,p.copy(revision=82).encode()))
+        assertThrows(IllegalArgumentException::class.java){DevicePreferences.accepted(p,p.copy(revision=82,charging=0).encode())}
+        assertThrows(IllegalArgumentException::class.java){p.copy(schema=1).encode()}
+        for((index,value) in listOf(10 to 2,11 to 8,0 to 3)) {
+            val bytes=p.encode();bytes[index]=value.toByte()
+            assertThrows(IllegalArgumentException::class.java){DevicePreferences.decode(bytes)}
+        }
     }
     @Test fun commandsEnforceBodyGrammar() {
         assertEquals(8,OpProtocol.encode(OpProtocol.GET_PREFERENCES,1).size)

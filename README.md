@@ -10,7 +10,8 @@ implemented recording, storage and Bluetooth workflows.
 Our original code is **free to use, study, modify and redistribute under
 Apache-2.0**. Fork it, adapt the controls, change the interface, and build your own
 features. Third-party components keep their own licenses; Nordic SDK components
-have additional restrictions. This is not an official Limitless product.
+and the optional MindyLink-derived integration have additional restrictions.
+See [component notices](THIRD_PARTY_NOTICES.md). This is not an official Limitless product.
 
 > **Experimental developer preview — not a one-click replacement.** Opening and
 > flashing the pendant can permanently remove its factory firmware. A complete
@@ -35,7 +36,15 @@ have additional restrictions. This is not an official Limitless product.
 - Experimental offline whisper.cpp transcription, including Lithuanian, for the
   supported short-clip path. Long-recording transcription remains unfinished.
 
-Current source snapshot: **firmware 0.4.62-key-reset**, **Android 0.6.56**.
+Current source snapshot: **firmware 0.4.63-recording-lights**, **Android 0.6.62**.
+
+The [September source update](docs/SEPTEMBER_2026_UPDATES.md) adds individual
+recording downloads, a compact persistent status header, foreground transfer
+handling, and separate recording/charging light preferences. It also includes an
+**optional MindyLink/Forge PC transcription and chat client**. That integration
+requires separately configured services and has not passed authenticated
+end-to-end qualification; the core pendant workflows still work without it.
+Automatic PC upload is off by default. See [privacy boundaries](SECURITY.md).
 
 Recordings → Transfer now offers [details-only sync](docs/METADATA_SYNC.md):
 refresh the recording list without downloading audio or applying deletions.

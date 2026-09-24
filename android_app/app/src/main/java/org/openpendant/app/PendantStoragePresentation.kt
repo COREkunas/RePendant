@@ -22,7 +22,7 @@ data class PendantStoragePresentation(val totalBytes: Long, val occupiedBytes: L
     companion object {
         internal val FULL_FIRMWARE = setOf("0.4.29", "0.4.30", "0.4.31", "0.4.32", "0.4.33", "0.4.34", "0.4.35", "0.4.36", "0.4.37", "0.4.38", "0.4.39", "0.4.40", "0.4.41", "0.4.42", "0.4.43", "0.4.44", "0.4.45", "0.4.46", "0.4.49", "0.4.50", "0.4.51", "0.4.52", "0.4.53", "0.4.54", "0.4.55")
         // One allowlist shared with the wire parser, not a display-only exception.
-        internal fun fullLayoutFirmware(firmware: String) = firmware in FULL_FIRMWARE || firmware in setOf("0.4.56", "0.4.57", "0.4.58", "0.4.59", "0.4.60", "0.4.61", "0.4.62")
+        internal fun fullLayoutFirmware(firmware: String) = firmware in FULL_FIRMWARE || firmware in setOf("0.4.56", "0.4.57", "0.4.58", "0.4.59", "0.4.60", "0.4.61", "0.4.62", "0.4.63")
         // Profile0.4.27: each audio slot reserves17 logical2048-byte payload pages.
         private const val BYTES_PER_SLOT = 17L * 2048L
         fun from(value: DeviceTelemetry?): PendantStoragePresentation? {

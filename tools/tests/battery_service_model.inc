@@ -114,10 +114,11 @@ static void service_tests(void)
  CHECK(!memcmp(&saved,&d,sizeof(d))&&starts==cached_starts&&writes==cached_writes&&time_us==cached_time);
  CHECK(!battery_service_read(&s,allowed,&mock_twim)&&s.valid&&s.sequence==1&&s.mv==4212&&s.soc==98&&s.flags==0x01c8);
  CHECK(s.temp==2981&&bp_fresh(&s,(uint64_t)k_uptime_get())&&bp_start(&s,(uint64_t)k_uptime_get()));
- CHECK((uint64_t)k_uptime_get()-s.at>=8000&&(uint64_t)k_uptime_get()-s.at<8100);
+ CHECK((uint64_t)k_uptime_get()-s.at>=5000&&(uint64_t)k_uptime_get()-s.at<5100);
+ CHECK(s.current_ma==-3&&!bp_charging(&s,(uint64_t)k_uptime_get()));
  /* More than an hour of real production protocol operations; byte arrays
   * and sealed/config state may never change. No command after init is a write. */
- for(unsigned i=2;i<=361;++i){
+ for(unsigned i=2;i<=601;++i){
   CHECK(!battery_service_read(&s,allowed,&mock_twim)&&s.sequence==i&&s.valid&&battery_service_released());
   CHECK(model_cmd==0&&model_sealed==1&&!model_cfg&&!model_key);
   CHECK(!memcmp(state,model_state,32)&&!memcmp(gain,model_gain,32));
@@ -128,7 +129,7 @@ static void service_tests(void)
  CHECK(battery_restore_run(&r,allowed,&mock_twim)==-EALREADY&&starts==total);
  CHECK(battery_probe_run(&p,allowed,&mock_twim)==-EALREADY&&starts==total);
  /* Every init and sample transfer failing: no automatic retry or reuse. */
- for(unsigned i=1;i<=14;++i){
+ for(unsigned i=1;i<=15;++i){
   service_setup();failure=NACK;fail_at=i;int rc=battery_service_init(allowed,&mock_twim);
   if(i<=9)CHECK(rc<0&&!service_ready);else CHECK(!rc&&battery_service_read(&s,allowed,&mock_twim)<0&&!s.valid);
   total=starts;CHECK(total==i&&battery_service_released());
@@ -139,7 +140,7 @@ static void service_tests(void)
   CHECK(battery_service_read(&s,allowed,&mock_twim)<0&&starts==total);
   CHECK(battery_service_init(allowed,&mock_twim)<0&&starts==total);
  }
- for(unsigned i=1;i<=14;++i){
+ for(unsigned i=1;i<=15;++i){
   service_setup();cancel_at=i;int rc=battery_service_init(allowed,&mock_twim);
   if(i<=9)CHECK(rc<0);else CHECK(!rc&&battery_service_read(&s,allowed,&mock_twim)<0);
   CHECK(starts==i-1&&battery_service_released());
@@ -168,6 +169,15 @@ static void service_tests(void)
  CHECK(battery_service_read(&s,allowed,&mock_twim)==-ETIMEDOUT&&!s.valid&&battery_service_released());
  CHECK(mock_twim.events[NRF_TWIM_EVENT_STOPPED]&&!fault&&!service_ready);
  /* Pure policy is advisory in this release, not wired to capture admission. */
+ /* Sign, charge/discharge/full flags, stale and minimum-current noise cases. */
+ for(int current=-32768;current<=32767;current+=1){
+  s=(struct bp_sample){.at=100,.mv=4200,.temp=2981,.soc=80,.flags=8,.valid=1,.sequence=1,.current_ma=(int16_t)current};
+  CHECK(bp_charging(&s,100)==(current>=5&&current<=1000));
+ }
+ service_setup();CHECK(!battery_service_init(allowed,&mock_twim));model_current=120;
+ CHECK(!battery_service_read(&s,allowed,&mock_twim)&&s.current_ma==120&&bp_charging(&s,(uint64_t)k_uptime_get()));
+ CHECK(!bp_charging(&s,s.at+BP_FRESH_MS+1));s.flags|=1;CHECK(!bp_charging(&s,s.at));
+ s.flags=0x208;CHECK(!bp_charging(&s,s.at));s.flags=0x108;s.current_ma=0;CHECK(!bp_charging(&s,s.at));
  reset();s=(struct bp_sample){.at=100,.mv=4200,.temp=2981,.soc=80,.flags=8,.valid=1,.sequence=1};
  for(unsigned i=0;i<=65535;++i){s.flags=(uint16_t)i;CHECK(bp_start(&s,100)==((i&8)&&!(i&0xfc30)));}s.flags=8;
  CHECK(!bp_fresh(&s,99)&&bp_fresh(&s,20100)&&!bp_fresh(&s,20101));

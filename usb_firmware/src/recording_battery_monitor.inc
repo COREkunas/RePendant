@@ -9,6 +9,12 @@ static atomic_t watch_deferred;
 #endif
 static uint32_t watch_samples,watch_usb_samples,watch_battery_samples;
 static uint16_t watch_min_mv,watch_max_mv;
+int recording_runtime_battery_charging(void)
+{
+ unsigned key=irq_lock();struct bp_sample s=watch_sample;
+ int stopped=atomic_get(&watch_done)||atomic_get(&watch_cancel);irq_unlock(key);
+ return !stopped&&bp_charging(&s,now(NULL));
+}
 static int watch_init_allowed(void *);
 #ifdef OPENPENDANT_PORTABLE_RECORDING
 static int portable_admit(void)
@@ -204,7 +210,9 @@ static int battery_watch_status(const struct shell *sh,size_t argc,char **argv)
   (unsigned)atomic_get(&watch_requested),(unsigned)atomic_get(&watch_initialized),
   (unsigned)atomic_get(&watch_done),(int)atomic_get(&watch_error),(unsigned)bp_fresh(&s,t),s.sequence,
   (unsigned long long)(s.sequence&&t>=s.at?t-s.at:UINT32_MAX),s.mv,s.soc,s.temp,s.flags,
-  count,on,off,low,high,(unsigned)atomic_get(&usb_configured),config_writes);return 0;
+  count,on,off,low,high,(unsigned)atomic_get(&usb_configured),config_writes);
+ shell_print(sh,"BATTERY_CHARGE current_ma=%d charging=%d valid=%u bus_io=0",(int)s.current_ma,
+  recording_runtime_battery_charging(),(unsigned)bp_fresh(&s,t));return 0;
 }
 static int battery_watch_init_status(const struct shell *sh,size_t argc,char **argv)
 {

@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** Explicit durable-library jobs. Sync has a user-started foreground service;
+/** Explicit durable-library jobs. Sync/export have a user-started foreground service;
  * playback and other actions remain foreground-only. A process-wide job gate and
  * playback registry survive Activity recreation. No worker waits under a UI,
  * coordinator or radio monitor. No startup sync, capture, enrollment or ASR.
@@ -49,6 +49,8 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
         @Volatile var playback: DurablePlaybackLifetime? = null
         @Volatile var interruptPlayback: (() -> Unit)? = null
         val cleanupUnconfirmed = AtomicBoolean()
+        var transfer: BackgroundTransfer? = null
+        var interruptTransfer: (() -> Unit)? = null
         fun check() { if (cancelled.get()) throw CancellationException("Library operation cancelled") }
     }
     private companion object {
@@ -70,22 +72,37 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
         val times = try { AndroidRecordingListTimes(context).read(rows) } catch (_: Exception) { emptyMap() }
         return DurableLibraryState(binding, vault, rows, message = message, firstSyncedTimes = times)
     }
-    private fun launch(kind: DurableLibraryWork, action: (Job) -> String) {
+    private fun launch(kind: DurableLibraryWork, finished: () -> Unit = {},
+        transferMessage: (() -> String)? = null, interruptTransfer: (() -> Unit)? = null,
+        action: (Job) -> String) {
         check(Looper.myLooper() === main.looper)
-        if (closed.get() || active.get() != null) return
+        if (closed.get() || active.get() != null) { finished(); return }
         if (!owner.compareAndSet(false, true)) {
-            publish(state.copy(message = "A previous storage job is still stopping. Check again shortly.")); return
+            publish(state.copy(message = "A previous storage job is still stopping. Check again shortly.")); finished(); return
         }
         val job = Job(); active.set(job)
+        job.interruptTransfer = interruptTransfer
         publish(state.copy(work = kind, message = when (kind) {
             DurableLibraryWork.REFRESH -> "Checking existing storage metadata…"
             DurableLibraryWork.SYNC -> "Checking enrolled storage and saved progress…"
             DurableLibraryWork.PLAY -> "Authenticating encrypted recording for RAM-only playback…"
+            DurableLibraryWork.EXPORT -> "Preparing selected recording for the chosen MindyLink PC…"
             else -> "Saving the exact deletion intent…"
         }))
+        if (TransferActivityPolicy.isTransfer(kind)) {
+            val transfer = BackgroundTransfer(kind, transferMessage ?: { state.message }) { cancel(job) }
+            job.transfer = transfer
+            try { StorageSyncService.start(context, transfer) }
+            catch (_: Exception) {
+                transfer.stop(); transfer.finish(); active.compareAndSet(job, null); owner.set(false)
+                publish(state.copy(work = DurableLibraryWork.NONE,
+                    message = "Background transfer could not start. Wait a moment, keep the app open and try again. Saved progress is kept."))
+                finished(); return
+            }
+        }
         worker.execute {
             var message: String
-            try { job.check(); message = action(job) }
+            try { job.transfer?.awaitForeground(); job.check(); message = action(job) }
             catch (_: CancellationException) { message = "Stopped. Saved sync checkpoints and pending deletion intents are retained." }
             catch (failure: Throwable) {
                 if (kind == DurableLibraryWork.SYNC) {
@@ -108,6 +125,8 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                 // A timed-out late cleanup cannot release a later job's owner.
                 publish(refreshed.copy(needsAttention = true, message = "Audio cleanup could not be confirmed. Storage actions remain fenced; no recording was changed."))
             } else { owner.set(false); publish(refreshed) }
+            job.transfer?.finish()
+            finished()
         }
     }
     fun refresh() = launch(DurableLibraryWork.REFRESH) { "Storage metadata checked." }
@@ -120,6 +139,11 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
     val syncPowerMessage:String get()=StorageSyncPower.readyMessage(client.telemetry,client.connected,
         android.os.SystemClock.elapsedRealtime(),client.longPeer()?.capabilityBits ?: 0)
     fun sync(peer: DurableConnectedPeer, content: RecordingSyncContent = transferPreferences.read().content) = storageSession(peer, content.mode)
+    fun download(peer: DurableConnectedPeer, selection: SelectedRecordingDownload) {
+        val row=state.recordings.singleOrNull { it.recording==selection.recording } ?: return
+        if(!selection.matches(row) || selection.recording.volume!=state.binding?.volume) return
+        storageSession(peer,DurableSyncMode.NORMAL,selection=selection)
+    }
     fun reviewQuickClear(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.INVENTORY_ONLY, reviewForClear=true)
     fun finishPendingClear(peer: DurableConnectedPeer) = storageSession(peer, DurableSyncMode.DELETIONS_ONLY)
     fun quickClear(review: QuickClearReview, includePhone: Boolean) {
@@ -133,7 +157,8 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
         storageSession(peer,DurableSyncMode.DELETIONS_ONLY,plan,!client.isCurrentRadioEpoch(peer.epoch))
     }
     private fun storageSession(peer: DurableConnectedPeer, requestedMode: DurableSyncMode,
-        clearPlan: BulkRecordingDeletion? = null, continueConnection: Boolean = false, reviewForClear: Boolean = false) {
+        clearPlan: BulkRecordingDeletion? = null, continueConnection: Boolean = false, reviewForClear: Boolean = false,
+        selection: SelectedRecordingDownload? = null) {
         if (state.syncRefusal(peer) != null || busy || closed.get() || client.preferencesSave.busy) return
         // A pending-clear continuation performs its own fresh power/idle readback
         // after reconnect. All newly started transfers check power before work.
@@ -142,11 +167,7 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
         }
         clearReview=null
         transferPolicy.attempted(peer, android.os.SystemClock.elapsedRealtime())
-        val removeAfterSync = requestedMode==DurableSyncMode.NORMAL && transferPreferences.read().removeAfterSync
-        try { StorageSyncService.start(context, this) }
-        catch (_: Exception) {
-            publish(state.copy(message = "Background transfer could not start. Keep the app open and try Sync again.")); return
-        }
+        val removeAfterSync = selection==null && requestedMode==DurableSyncMode.NORMAL && transferPreferences.read().removeAfterSync
         val selectedBinding = state.binding!!
         launch(DurableLibraryWork.SYNC) { job ->
             val syncStarted = android.os.SystemClock.elapsedRealtime()
@@ -298,8 +319,9 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                         return actual.delete(intent,call)
                     }
                 }
-                val boundedTransport=if(mode==DurableSyncMode.INVENTORY_ONLY) MetadataOnlyRecordingTransport(transport) else transport
-                val session = DurableRecordingSyncSession(connection, boundedTransport, metadata, files, observer = observer, mode=mode)
+                val boundedTransport=if(selection!=null) SelectedRecordingTransport(transport,selection)
+                    else if(mode==DurableSyncMode.INVENTORY_ONLY) MetadataOnlyRecordingTransport(transport) else transport
+                val session = DurableRecordingSyncSession(connection, boundedTransport, metadata, files, observer = observer, mode=mode, selection=selection)
                 job.sync = session; if (job.cancelled.get()) session.cancel()
                 try { result = session.run(); job.check() }
                 catch (failure: DurableSyncException) {
@@ -370,9 +392,26 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
                 } else if(verifyingClear) {
                     if(result.catalogEntries.isEmpty()) "Pendant recordings cleared and empty storage confirmed. Pairing and recording keys kept. Existing storage is reused; this is not a secure erase."
                     else "Selected removals confirmed, but ${result.catalogEntries.size} recordings remain on the pendant. Nothing outside the reviewed selection was deleted; check storage again."
-                } else "Last sync complete · ${result.catalogRecords} recordings found on pendant · $newlySaved new parts saved · ${SyncTransferProgress.formatBytes(received)} received · $deleted pendant deletions confirmed." +
+                } else if(selection!=null) "Selected recording downloaded · ${SyncTransferProgress.formatBytes(received)} received. Pendant copy kept; other recordings unchanged."
+                else "Last sync complete · ${result.catalogRecords} recordings found on pendant · $newlySaved new parts saved · ${SyncTransferProgress.formatBytes(received)} received · $deleted pendant deletions confirmed." +
                     if (result.pendingPhoneDeletion > 0) " ${result.pendingPhoneDeletion} phone deletion(s) need Resume deletion." else ""
             }
+        }
+    }
+    fun export(recording:DurableRecordingId,action:(RecordingPcmExport,()->Unit)->String,onFinished:()->Unit,
+        progress: () -> String = { state.message }, interrupt: (() -> Unit)? = null) {
+        val row=state.recordings.singleOrNull { it.recording==recording }
+        if(row==null||!state.playable(row)||busy||closed.get()){onFinished();return}
+        val manifest=checkNotNull(row.manifest)
+        launch(DurableLibraryWork.EXPORT, finished=onFinished, transferMessage=progress, interruptTransfer=interrupt) { job ->
+                val binding=checkNotNull(AndroidDurableBinding.read(context));check(recording.volume==binding.volume)
+                val vault=AndroidDurableBinding.vault(context);binding.requireVerifiedRecipient(vault.summary());job.check()
+                withStorage(false) { metadata,files ->
+                    val core=metadata.coordinator(recording) { files.verifiedOnDisk(expectation(it,binding)) }
+                    try { RecordingPcmExport(core,manifest,PlaybackCiphertextSource { files.readPublished(it) },
+                        PlaybackKeyAccess { vault.withActiveKey(it) },NativeOpusPacketDecoder,job::check).use { action(it,job::check) } }
+                    finally { core.close() }
+                }
         }
     }
     fun play(recording: DurableRecordingId, policy: RecordingGapPolicy = RecordingGapPolicy.PAUSE_AT_GAP,
@@ -524,8 +563,7 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
             finally { core.close() }
         }
         if (intent.phonePending) {
-            val derivatives = RecordingDerivativeDeletion(playbackRegistry, RamOnlyRecordingDerivatives(
-                context.noBackupFilesDir.canonicalFile.toPath(), SegmentDirectorySync(AndroidDurableSegments::syncDirectory)))
+            val derivatives = RecordingDerivativeDeletion(playbackRegistry, MindyLinkRecordingDerivatives(context))
             val removal = AndroidPhoneRecordingDeletion.create(context, derivatives)
             metadata.openPendingPhoneDeletion(recording, intent.operationId, manifest.sha256).use { check(it.complete(removal)) }
         }
@@ -538,7 +576,8 @@ internal class AndroidDurableLibrary(context: Context, private val client: Penda
     internal fun cancelSync() { if (state.work == DurableLibraryWork.SYNC) cancel() }
     private fun cancel(job: Job) {
         if (active.get() !== job) return // A queued old focus callback cannot cancel a newer job.
-        job.cancelled.set(true); job.sync?.cancel()
+        if (!job.cancelled.compareAndSet(false, true)) return
+        job.sync?.cancel(); job.interruptTransfer?.invoke()
         // Platform disposal is off-main. The worker's lifetime guard tracks the
         // task and never releases the process owner while cleanup is uncertain.
         job.playback?.cancelAsync()

@@ -9,8 +9,10 @@ import android.os.SystemClock
  * No Activity, key or PCM is retained after detach. No work starts on creation. */
 internal class PendantSession private constructor(context: Context) : PendantClient.Listener {
     private val listeners = LinkedHashSet<PendantClient.Listener>()
+    val headerCache = AndroidPendantHeaderCache(context)
     val client = PendantClient(context.applicationContext, this)
     val library = AndroidDurableLibrary(context.applicationContext, client, ::changed)
+    val mindyLink = MindyLinkController(context.applicationContext, library, ::changed)
     val longRecording = AndroidLongRecordingController(context.applicationContext, client, ::changed)
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
@@ -23,13 +25,14 @@ internal class PendantSession private constructor(context: Context) : PendantCli
         }
     }
     fun foreground() {
-        main();foreground=true;longRecording.foreground()
+        main();foreground=true;longRecording.foreground();mindyLink.foreground()
         handler.removeCallbacks(maintain);handler.post(maintain)
     }
     fun attach(listener: PendantClient.Listener) { main(); listeners.add(listener) }
     fun detach(listener: PendantClient.Listener) { main(); listeners.remove(listener) }
     override fun changed() {
         main()
+        headerCache.observe(client.preferencesPeer, client.telemetry, client.connected)
         // A recovery is not a new user connection and must not create an
         // automatic sync -> close -> reconnect -> sync loop.
         if(client.recoveredConnection) client.durablePeer()?.let {
@@ -45,10 +48,11 @@ internal class PendantSession private constructor(context: Context) : PendantCli
     fun background() {
         main()
         foreground=false;handler.removeCallbacks(maintain)
+        mindyLink.background()
         longRecording.background()
-        if (library.state.work != DurableLibraryWork.SYNC) {
-            library.cancel(); client.background()
-        }
+        if (TransferActivityPolicy.cancelOnBackground(library.state.work)) library.cancel()
+        // Forge export uses the phone copy, so it does not need a BLE connection.
+        if (library.state.work != DurableLibraryWork.SYNC) client.background()
     }
     private fun main() = check(Looper.myLooper() == Looper.getMainLooper())
     companion object {

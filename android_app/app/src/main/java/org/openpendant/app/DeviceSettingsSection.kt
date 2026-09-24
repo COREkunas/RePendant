@@ -100,12 +100,20 @@ internal class DeviceSettingsSection(private val activity:Activity,private val c
             val first=if(required)1 else 0
             led.addView(chooser(label,colors.drop(first),current-first) { index -> edit { change(index+first) } })
         }
-        color("Recording · steady light",p.recording,true){copy(recording=it)}
+        color("Recording color",p.recording,true){copy(recording=it)}
+        if(p.schema>=2) {
+            led.addView(chooser("Recording light behavior",listOf("Steady while recording","Hidden · start/stop confirmation only"),p.recordingBehavior) {
+                edit { copy(recordingBehavior=it) }
+            })
+            led.addView(text("Hidden mode: 3 short blinks when recording starts, then dark; 2 blinks after stopping and saving successfully. Uses your recording color. Fault and pairing warnings remain visible.",13,muted))
+            color("Battery charging",p.charging,false){copy(charging=it)}
+            led.addView(text("Charging color follows a fresh positive battery-current reading, not just a USB connection. Recording and safety warnings take priority.",13,muted))
+        } else led.addView(text("Update pendant firmware to use hidden recording mode and a separate charging color.",13,muted))
         color("Low battery · brief blinking",p.lowBattery,true){copy(lowBattery=it)}
         color("Bluetooth connected",p.connected,false){copy(connected=it)}
         color("USB connected · not charging status",p.usb,false){copy(usb=it)}
         color("Device fault",p.fault,true){copy(fault=it)}
-        led.addView(text("Recording takes priority, then faults, low battery, Bluetooth and USB. Recording cannot be made invisible.",13,muted))
+        led.addView(text("Fault warnings take priority over hidden mode. Recording confirmations take priority over low battery, charging, Bluetooth and USB lights. Color changes apply after Save on pendant.",13,muted))
         val brightness=text("Brightness: ${p.brightness} / 64",14,ink)
         led.addView(brightness)
         led.addView(SeekBar(activity).apply {

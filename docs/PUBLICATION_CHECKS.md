@@ -1,6 +1,35 @@
-# Public export checks — 2026-09-21
+# Public export checks — 2026-09-24
 
-## Source update: firmware 0.4.62 / Android 0.6.56
+## Source update: firmware 0.4.63 / Android 0.6.62
+
+- Exported the owner's existing development updates, matching **180 firmware,
+  153 Android main and 87 JVM-test files** to the preserved release snapshots
+  (full Android baseline plus later incremental overlays; text line endings
+  normalized). Vendor source, private instrumentation, device logs, recordings,
+  accounts and signing/recovery keys remain excluded.
+- Re-ran public Android unit tests and lint: **731 tests, zero failures, errors
+  or skips**; lint **0 errors / 35 warnings**. Build completed successfully.
+  This used the public developer-signing configuration without installing an APK.
+- Public native tests passed: **3,085 preference checks + 118 runtime/persistence
+  checks**, **1,680,080 battery assertions / 423 groups**, **253 BLE security
+  assertions**, and **37,162 recording-control assertions / 22 groups**.
+- Preserved public signing/build portability. The new preferences test uses the
+  existing public compiler helper instead of importing the private runtime/Dhara
+  harness; production sources and test expectations are unchanged.
+- Updated privacy and licensing notices for explicit optional MindyLink/Forge
+  networking, OkHttp, test-only JSON-java and Lucide/Feather icons. Retained the
+  separate MindyLink licence; no blanket Apache relicensing of derived portions.
+- Publication checks cover tracked paths, credential/device-identifier patterns,
+  relative documentation links and source-snapshot equality. This is a targeted
+  check, not a comprehensive security audit.
+
+No hardware connection, firmware rebuild/flash, microphone capture, account use,
+audio upload, recording deletion or new binary release was performed for this
+source update. [Feature details and physical-test limits](SEPTEMBER_2026_UPDATES.md)
+distinguish existing development evidence from this offline publication check.
+Existing downloads/tags remain firmware 0.4.57 / Android 0.6.49.
+
+## Historical source update: firmware 0.4.62 / Android 0.6.56
 
 Includes the previously unexported USB pairing, phone migration and new-key reset
 sources plus metadata-only recording sync. Private keys, factory backups, phone

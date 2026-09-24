@@ -15,7 +15,8 @@ class DeviceSettingsPowerTest {
         assertNull(refusal(value.copy(firmware="0.4.60")))
         assertNull(refusal(value.copy(firmware="0.4.61")))
         assertNull(refusal(value.copy(firmware="0.4.62")))
-        for(v in listOf("0.4.56","0.4.63"))assertNotNull(refusal(value.copy(firmware=v)))
+        assertNull(refusal(value.copy(firmware="0.4.63")))
+        for(v in listOf("0.4.56","0.4.64"))assertNotNull(refusal(value.copy(firmware=v)))
         for(bits in listOf(0L,16095L,32478L,65247L))assertNotNull(refusal(bits=bits))
     }
     @Test fun lowStaleMissingOrUnsafePowerCannotSave() {

@@ -683,7 +683,7 @@ static int recorder_release(void *u,uint64_t d)
  !capture_status.joined||capture_status.power_on||
  !capture_status.clock_stopped||!capture_status.buffers_scrubbed)return -EPERM;
  atomic_clear(&recording);
- if(pendant_audio_indicator(false)||rv_suspend(&volume,d))return -EPERM;
+ if(pendant_recording_prepare(false)||rv_suspend(&volume,d))return -EPERM;
  if(rpc_leave(&cpu_clock))return -EPERM;
  atomic_set(&volume_suspended,1);return 0;
 }
@@ -701,7 +701,7 @@ static int capture_start(void *u,uint32_t value,uint64_t first,uint64_t d)
   atomic_clear(&generated_frames);atomic_clear(&generated_error);atomic_set(&generated_live,1);
   k_timer_start(&generated_timer,K_MSEC(20),K_MSEC(20));return 0;
  }
- if(check(u,1,d)||pendant_audio_indicator(true))return -EPERM;
+ if(check(u,1,d)||pendant_recording_prepare(true))return -EPERM;
  atomic_set(&epoch,(atomic_val_t)value);atomic_set(&recording,1);
  return recording_capture_start(value,first,d);
 }
@@ -896,6 +896,9 @@ static void record_loop(void)
 #ifdef OPENPENDANT_LONG_CONTROL
    if(active.control_ticket)long_terminal_publish();
 #endif
+   /* RW_COMPLETE follows final manifest, joined capture/storage and release.
+    * Faulted/uncertain saves never receive the success pattern. */
+   if(!active.public_test&&!atomic_get(&faulted))pendant_recording_confirm(false);
    break;
   }
 #ifdef OPENPENDANT_LONG_CONTROL
@@ -1016,6 +1019,7 @@ static int perform(struct command *cmd)
    return 0;
   }
   if(started)fatal(NULL,-EIO);
+  if(!cmd->public_test)pendant_recording_confirm(true);
 #ifdef OPENPENDANT_LONG_CONTROL
   if(cmd->control_ticket){int cached=long_publish();if(cached&&cached!=LRC_BUSY)fatal(NULL,-EIO);}
 #endif

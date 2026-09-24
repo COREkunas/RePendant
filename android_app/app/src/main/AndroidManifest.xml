@@ -12,11 +12,14 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- No phone microphone, Internet, shared-storage or boot-start permission. -->
+    <!-- Optional, explicitly configured MindyLink. No phone microphone permission. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="OpenPendant"
@@ -24,7 +27,7 @@
         android:theme="@style/AppTheme"
         android:supportsRtl="true">
         <service android:name=".StorageSyncService" android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|dataSync" />
         <activity android:name=".RecoveryActivity" android:exported="false" />
         <activity android:name=".UsbPairingActivity" android:exported="false" />
         <activity android:name=".PhoneMigrationActivity" android:exported="false" />

@@ -42,6 +42,10 @@ class MainActivity : Activity(), PendantClient.Listener {
     private lateinit var transcription: TranscriptionController
     private lateinit var durableLibrary: AndroidDurableLibrary
     private lateinit var durableSection: DurableLibrarySection
+    private lateinit var pendantHeader: PendantHeaderView
+    private lateinit var mindySection: MindyLinkSection
+    private lateinit var mindyTab: Button
+    private lateinit var mindyPage: LinearLayout
     private lateinit var deviceSettings: DeviceSettingsSection
     private lateinit var storageSettings: StorageSettingsSection
     private lateinit var pendantStorageValue: TextView
@@ -100,8 +104,17 @@ class MainActivity : Activity(), PendantClient.Listener {
     private lateinit var operationStop: Button
     private var uiReady = false
     private var foreground = false
+    // Expire display freshness even when no new radio event arrives. No I/O.
+    private val headerClock = object : Runnable {
+        override fun run() {
+            if(!foreground || !uiReady) return
+            renderHeader()
+            mainHandler.postDelayed(this, 1000)
+        }
+    }
     private val autoTransferCheck = Runnable {
         if (uiReady && foreground) {
+            pendantSession.mindyLink.observeForeground()
             val now = android.os.SystemClock.elapsedRealtime()
             val peer = client.durablePeer()
             val prefs = durableLibrary.transferPreferences.read()
@@ -162,7 +175,7 @@ class MainActivity : Activity(), PendantClient.Listener {
             if (uiReady) { error?.let(::showError); changed() }
         }
         durableLibrary = pendantSession.library
-        activeTab = savedInstanceState?.getInt("tab", 0)?.coerceIn(0, 2) ?: 0
+        activeTab = savedInstanceState?.getInt("tab", 0)?.coerceIn(0, 3) ?: 0
         libraryQuery = savedInstanceState?.getString("libraryQuery")?.take(120) ?: ""
         refreshLibrary()
         buildUi()
@@ -266,6 +279,8 @@ class MainActivity : Activity(), PendantClient.Listener {
             }
             insets
         }
+        pendantHeader = PendantHeaderView(this, ::headerConnect) { if(uiReady)durableSection.requestSync() }
+        root.addView(pendantHeader.view, LinearLayout.LayoutParams(-1,-2))
         val host = FrameLayout(this)
         root.addView(host, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         val (dashboard, dashboardBody) = page()
@@ -274,6 +289,9 @@ class MainActivity : Activity(), PendantClient.Listener {
         recordingsPage = library; host.addView(library)
         val (settings, settingsBody) = page()
         settingsPage = settings; host.addView(settings)
+        mindySection = MindyLinkSection(this, pendantSession.mindyLink) { showTab(2) }
+        mindyPage = mindySection.view.apply { setPadding(dp(18),dp(8),dp(18),dp(6)) }
+        host.addView(mindyPage,FrameLayout.LayoutParams(-1,-1))
 
         val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val greeting = column()
@@ -331,6 +349,7 @@ class MainActivity : Activity(), PendantClient.Listener {
 
         settingsBody.addView(eyebrow("Make it yours"))
         settingsBody.addView(label("Settings", 30f, bold = true))
+        card(settingsBody).addView(mindySection.settingsView)
         val deviceStatus = card(settingsBody)
         deviceStatus.addView(eyebrow("Technical details"))
         telemetryDetail = label("Connect to check firmware and device activity.", 14f, muted)
@@ -343,9 +362,9 @@ class MainActivity : Activity(), PendantClient.Listener {
         }); deviceStatus.addView(technicalBody)
         durableSection = DurableLibrarySection(this, durableLibrary, { client.durablePeer() },
             { client.recording || transcriptState.busy || importingModel || pendantSession.longRecording.busy || pendantSession.longRecording.ownsRadio }, { player.stop() },
-            { startActivity(Intent(this, RecoveryActivity::class.java)) })
+            { startActivity(Intent(this, RecoveryActivity::class.java)) }, pendantSession.mindyLink, mindySection)
         disclosure(deviceStatus, "About device readings", "Supported firmware reports software observations while connected and idle. Cached readings expire after disconnect or ten seconds; battery freshness also includes the gauge sample age, up to twenty seconds total. Battery percent is a gauge estimate, not measured remaining runtime. Charging state is not reported. LED values are commanded levels, not optical measurements. Storage counts cover the enabled recording allocation, not raw NAND. " +
-            "Portable recording requires supported firmware and a fresh battery check. The pendant stops and attempts to save if battery data becomes low or unavailable; abrupt power loss can still lose the last audio. Supported firmware can sync on battery after fresh power checks. Recovery backup and explicit enrollment remain required. Encrypted-recording transcription is not yet enabled.")
+            "Portable recording requires supported firmware and a fresh battery check. The pendant stops and attempts to save if battery data becomes low or unavailable; abrupt power loss can still lose the last audio. Supported firmware can sync on battery after fresh power checks. Recovery backup and explicit enrollment remain required. Optional MindyLink transcription requires a complete phone copy and a compatible Forge PC.")
 
         val connection = card(settingsBody)
         // Connection setup comes first; diagnostics follow the everyday settings.
@@ -447,11 +466,8 @@ class MainActivity : Activity(), PendantClient.Listener {
         }
         libraryBody.addView(search, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(17); bottomMargin = dp(5) })
         libraryBody.addView(durableSection.library)
-        val testClips = column().apply { visibility = View.GONE }
-        libraryBody.addView(button("Short test clips on this phone") {
-            testClips.visibility = if (testClips.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        }); libraryBody.addView(testClips)
-        recordingsList = column(); testClips.addView(recordingsList)
+        // Retain legacy files, but remove the diagnostic clips section from the library.
+        recordingsList = column()
         val speech = card(settingsBody)
         speech.addView(eyebrow("On-device intelligence"))
         speech.addView(label("Lithuanian transcription", 20f, bold = true))
@@ -474,7 +490,7 @@ class MainActivity : Activity(), PendantClient.Listener {
         }, ::connectFromDashboard)
         settingsBody.addView(storageSettings.view,4,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(12);bottomMargin=dp(12) })
         settingsBody.addView(button("About OpenPendant") { showAbout() })
-        settingsBody.addView(label("Private by design · no account or cloud", 12f, muted))
+        settingsBody.addView(label("Local recording · optional MindyLink PC features", 12f, muted))
         operationBar = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(6), dp(14), dp(6))
             background = shape(raisedPanel, 18); visibility = View.GONE
@@ -482,7 +498,7 @@ class MainActivity : Activity(), PendantClient.Listener {
         operationLabel = label("", 13f, cyan, true)
         operationBar.addView(operationLabel, LinearLayout.LayoutParams(0, -2, 1f))
         operationStop = button("Stop") {
-            if (durableLibrary.state.work in setOf(DurableLibraryWork.PLAY, DurableLibraryWork.SYNC)) durableLibrary.cancel()
+            if (durableLibrary.state.work in setOf(DurableLibraryWork.PLAY, DurableLibraryWork.SYNC, DurableLibraryWork.EXPORT)) durableLibrary.cancel()
         }
         operationBar.addView(operationStop, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
         root.addView(operationBar, LinearLayout.LayoutParams(-1,-2).apply { setMargins(dp(12),dp(6),dp(12),0) })
@@ -490,9 +506,11 @@ class MainActivity : Activity(), PendantClient.Listener {
         dashboardTab = button("Dashboard") { showTab(0) }
         recordingsTab = button("Recordings") { showTab(1) }
         settingsTab = button("Settings") { showTab(2) }
+        mindyTab = button("AI chat") { showTab(3) }
         navigation.addView(dashboardTab, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         navigation.addView(recordingsTab, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         navigation.addView(settingsTab, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        navigation.addView(mindyTab, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(navigation, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(12), dp(6), dp(12), dp(10)) })
         setContentView(root); root.requestApplyInsets()
     }
@@ -502,15 +520,18 @@ class MainActivity : Activity(), PendantClient.Listener {
         dashboardPage.visibility = if (tab == 0) View.VISIBLE else View.GONE
         recordingsPage.visibility = if (tab == 1) View.VISIBLE else View.GONE
         settingsPage.visibility = if (tab == 2) View.VISIBLE else View.GONE
-        listOf(dashboardTab, recordingsTab, settingsTab).forEachIndexed { index, view ->
+        mindyPage.visibility = if (tab == 3) View.VISIBLE else View.GONE
+        listOf(dashboardTab, recordingsTab, settingsTab, mindyTab).forEachIndexed { index, view ->
             view.isSelected = index == tab
             val selectedColor = if (index == tab) green else muted
             view.setTextColor(selectedColor); view.textSize = 12f
+            view.setPadding(dp(2), dp(8), dp(2), dp(8))
+            view.maxLines = 1; view.ellipsize = android.text.TextUtils.TruncateAt.END
             view.backgroundTintList = null
             view.background = shape(if (index == tab) raisedPanel else panel, 17, if (index == tab) line else panel)
-            view.setCompoundDrawables(null, referenceIcon(listOf(R.drawable.ic_dashboard, R.drawable.ic_recordings, R.drawable.ic_settings)[index], selectedColor), null, null)
+            view.setCompoundDrawables(null, referenceIcon(listOf(R.drawable.ic_dashboard, R.drawable.ic_recordings, R.drawable.ic_settings, R.drawable.ic_chat)[index], selectedColor), null, null)
             view.compoundDrawablePadding = dp(5)
-            view.contentDescription = listOf("Dashboard", "Recordings", "Settings")[index] + if (index == tab) ", selected" else ""
+            view.contentDescription = listOf("Dashboard", "Recordings", "Settings", "AI chat")[index] + if (index == tab) ", selected" else ""
         }
     }
 
@@ -539,6 +560,31 @@ class MainActivity : Activity(), PendantClient.Listener {
         if (client.selected != null && client.isBonded) { player.stop(); client.connect() } else showTab(2)
     }
 
+    private fun headerBusy() = durableLibrary.busy || client.recording || client.pairing ||
+        client.preferencesSave.busy || transcriptState.busy || importingModel ||
+        pendantSession.longRecording.busy || pendantSession.longRecording.ownsRadio
+    private fun headerConnect() {
+        if(!uiReady || headerBusy()) return
+        if(client.connected || client.connecting) client.disconnect() else connectFromDashboard()
+    }
+    private fun renderHeader() {
+        val peer = client.preferencesPeer ?: durableLibrary.state.binding?.bondAddress
+        val snapshot = pendantSession.headerCache.forPeer(peer)
+        val syncing = durableLibrary.state.work == DurableLibraryWork.SYNC
+        val now = android.os.SystemClock.elapsedRealtime()
+        val long = pendantSession.longRecording
+        val activeState = when {
+            syncing -> "Syncing recordings…"
+            client.connected && long.ownsRadio && long.observation?.outcome == LongRecordingOutcome.OBSERVED && now - long.observedAt in 0..10_000 ->
+                DashboardReadings.recording(true,client.telemetry,now,long.observation,long.observedAt,client.recording)
+            else -> null
+        }
+        pendantHeader.render(PendantHeaderPresentation.from(snapshot,client.connected,client.connecting,
+            client.ready,client.telemetry,now,syncing),
+            client.connected,client.connecting,!headerBusy(),!headerBusy()&&durableLibrary.syncRefusal(client.durablePeer())==null,
+            durableLibrary.transferPreferences.read().content==RecordingSyncContent.DETAILS_ONLY,syncing,activeState)
+    }
+
     private fun requestRecording() {
         if (!client.ready || client.recording || libraryError != null || transcriptState.busy || importingModel || durableLibrary.busy || pendantSession.longRecording.ownsRadio || pendantSession.longRecording.activeRecording) return
         // Preflight only; publication never replaces an existing recording.
@@ -556,6 +602,8 @@ class MainActivity : Activity(), PendantClient.Listener {
 
     override fun changed() {
         if (!uiReady || isFinishing) return
+        renderHeader()
+        mindySection.render()
         val longControl=pendantSession.longRecording
         val longObservation=longControl.observation
         val longState=longObservation?.state
@@ -643,11 +691,17 @@ class MainActivity : Activity(), PendantClient.Listener {
         pendantName.stableText = client.found.values.firstOrNull { it.device == client.selected }?.title ?: "OpenPendant"
         val rows = durableLibrary.state.recordings
         val work = durableLibrary.state.work
-        operationBar.visibility = if (work in setOf(DurableLibraryWork.PLAY, DurableLibraryWork.SYNC)) View.VISIBLE else View.GONE
+        updateTransferScreen()
+        operationBar.visibility = if (work in setOf(DurableLibraryWork.PLAY, DurableLibraryWork.SYNC, DurableLibraryWork.EXPORT)) View.VISIBLE else View.GONE
         operationLabel.stableText = if (work == DurableLibraryWork.PLAY)
             if (durableLibrary.player?.snapshot()?.playing == false) "Playback paused" else "Playing recording"
+            else if(work==DurableLibraryWork.EXPORT) pendantSession.mindyLink.message
             else durableLibrary.state.transfer?.let { "Syncing · ${it.percent}%" } ?: "Preparing sync…"
-        operationStop.contentDescription = if (work == DurableLibraryWork.PLAY) "Stop recording playback" else "Stop storage sync"
+        operationStop.contentDescription = when(work) {
+            DurableLibraryWork.PLAY -> "Stop recording playback"
+            DurableLibraryWork.EXPORT -> "Stop upload to Forge"
+            else -> "Stop storage sync"
+        }
         val awaiting = rows.count(RecordingListPresentation::needsSync)
         syncSummary.stableText = if (durableLibrary.state.work == DurableLibraryWork.SYNC) "Syncing to phone…"
             else if (awaiting > 0) "$awaiting need sync" else "${rows.count(RecordingListPresentation::phoneComplete)} saved on phone"
@@ -734,6 +788,7 @@ class MainActivity : Activity(), PendantClient.Listener {
     }
 
     private fun renderLibrary(readTranscripts: Boolean = true) {
+        if (recordingsList.parent == null) return // Removed legacy UI must not read hidden transcripts.
         val key = localRecordings.joinToString { "${it.id}:${it.byteCount}:${it.createdAtMillis}" } +
             ":${client.recording}:${player.playing}:$playingRecordingId:$visibleRecordings:$libraryError:$transcriptState:$importingModel:${modelAvailable()}:$libraryQuery:${durableLibrary.busy}"
         if (key == renderedLibrary) return
@@ -831,9 +886,9 @@ class MainActivity : Activity(), PendantClient.Listener {
     private fun showAbout() {
         @Suppress("DEPRECATION") val version = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         AlertDialog.Builder(this).setTitle("OpenPendant · $version")
-            .setMessage("Your pendant. Your recordings.\n\nNo account. No Internet access. No phone microphone.\n\n" +
+            .setMessage("Your pendant. Your recordings.\n\nNo phone microphone. Recording and storage sync need no account. MindyLink is optional and uses Internet access only for its configured features.\n\n" +
                 "Started storage sync continues in the background with a Stop notification; saved checkpoints survive interruptions. Leaving the app stops short-clip capture, playback and transcription. Changing tabs does not disconnect. Optional automatic sync is configured under Recordings → Transfer.\n\n" +
-                "Record on the pendant from Dashboard. Sync saved recordings from Recordings while the pendant has USB power. Recovery backup is required. Lithuanian transcription currently supports short phone clips only; long-recording transcription is not yet available.")
+                "Use MindyLink for Lithuanian long-recording transcription on a selected Forge PC and model questions with selected transcripts. No recovery keys are uploaded. Automatic PC transcription is off by default. PC jobs remain until explicitly removed; deleting phone/pendant copies does not erase PC copies.")
             .setPositiveButton("Got it", null).show()
     }
 
@@ -963,9 +1018,24 @@ class MainActivity : Activity(), PendantClient.Listener {
     override fun onResume() {
         super.onResume()
         foreground = true
+        mainHandler.removeCallbacks(headerClock)
+        mainHandler.post(headerClock)
+        updateTransferScreen()
         pendantSession.foreground()
         if (uiReady && !client.recording && !transcriptState.busy && !importingModel) durableLibrary.refresh()
     }
-    override fun onStop() { foreground=false; mainHandler.removeCallbacks(autoTransferCheck); player.stop(); transcription.cancel(); importCancelled.set(true); pendantSession.background(); super.onStop() }
+    private fun updateTransferScreen() {
+        val keep = ::durableLibrary.isInitialized && TransferActivityPolicy.keepScreenOn(foreground, durableLibrary.state.work)
+        if (keep) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (keep && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            val notice = getSharedPreferences("transfer-notification-prompt", MODE_PRIVATE)
+            if (!notice.getBoolean("asked", false)) {
+                notice.edit().putBoolean("asked", true).apply()
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 110)
+            }
+        }
+    }
+    override fun onStop() { if(::mindySection.isInitialized)mindySection.persistDraft();foreground=false; mainHandler.removeCallbacks(headerClock); updateTransferScreen(); mainHandler.removeCallbacks(autoTransferCheck); player.stop(); transcription.cancel(); importCancelled.set(true); pendantSession.background(); super.onStop() }
     override fun onDestroy() { uiReady = false; pendantSession.detach(this); transcription.close(); importCancelled.set(true); modelWorker.shutdownNow(); player.close(); super.onDestroy() }
 }

@@ -17,7 +17,7 @@ static void model_transfer(void)
   }else if(tx[0]==6){CHECK(nr==2);v=model_flags;if(model_case==5)v|=0x4000;}
   else if(tx[0]==4){CHECK(nr==2);v=model_case==6?3000:4212;}
   else if(tx[0]==0x1c){CHECK(nr==2);v=model_case==11?101:98;}
-  else if(tx[0]==0x10){CHECK(nr==2);v=(uint16_t)-3;}
+  else if(tx[0]==0x10){CHECK(nr==2);v=model_current;}
   else if(tx[0]==0x1e){CHECK(nr==2);v=2981;}
   else if(tx[0]==0x40){CHECK(nr==32&&model_cfg&&!model_sealed);memcpy(rx,model_stage,32);return;}
   else if(tx[0]==0x60){CHECK(nr==1&&model_cfg&&!model_sealed);rx[0]=model_checksum();if(model_case==7)rx[0]^=1;return;}
@@ -47,7 +47,7 @@ static void model_transfer(void)
 static void setup_restore(unsigned c)
 {
  reset();restore_mode=1;model_case=c;transfer_delay=10;model_key=model_cfg=model_subclass=0;
- model_sealed=1;model_flags=0x0168;
+ model_sealed=1;model_flags=0x0168;model_current=(uint16_t)-3;
  for(unsigned i=0;i<32;++i){model_state[i]=(uint8_t)(i*5U);model_gain[i]=(uint8_t)(i*3U);}
  model_gain[5]|=0x80;
  if(c==12){model_sealed=0;model_gain[5]&=0x7f;restore_word(model_state,6,245);

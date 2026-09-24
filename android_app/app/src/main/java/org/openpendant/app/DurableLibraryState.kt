@@ -1,6 +1,6 @@
 package org.openpendant.app
 
-enum class DurableLibraryWork { NONE, REFRESH, SYNC, PLAY, DELETE }
+enum class DurableLibraryWork { NONE, REFRESH, SYNC, PLAY, DELETE, EXPORT }
 enum class DurableDeletionAction { CHOOSE_LOCATION, RESUME_PHONE, SYNC_PENDANT }
 
 /** A remote-only pending intent must use sync, not repeat local deletion. */

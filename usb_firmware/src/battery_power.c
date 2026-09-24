@@ -1,4 +1,9 @@
 #include "battery_power.h"
+/* TI AverageCurrent is positive into the battery. CHG is only permission.
+ * Avoid idle/noise, full/discharge flags, stale/untrusted samples. No power
+ * admission decision uses this cosmetic classification. */
+int bp_charging(const struct bp_sample *s,uint64_t now)
+{return bp_fresh(s,now)&&!(s->flags&0x0201U)&&s->current_ma>=5&&s->current_ma<=1000;}
 int bp_fresh(const struct bp_sample *s,uint64_t t)
 {return s&&s->valid==1&&s->sequence&&t>=s->at&&t-s->at<=BP_FRESH_MS&&
  s->mv>0&&s->mv<=6000&&s->soc<=100&&(s->flags&8U)&&!(s->flags&0xfc30U);}

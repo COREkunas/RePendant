@@ -17,7 +17,7 @@ static int service_initialize(int (*allow)(void*),int (*restore_allow)(void*),
      !recovered||recovered->attempted)return -EPERM;
   service_deferred=0;
  }else if(!atomic_cas(&used,0,2))return -EPERM;
- struct battery_restore_result r={0};struct restore_actor a={&r,allow,user,k_uptime_get()};
+ struct battery_restore_result r={0};struct restore_actor a={&r,allow,user,k_uptime_get(),0};
  int rc=-EPERM;service_initial=(struct battery_service_init_result){.attempted=1,.stage=1};
  service_initial.stage=2;
  if(!allow(user))goto done;
@@ -42,7 +42,7 @@ static int service_initialize(int (*allow)(void*),int (*restore_allow)(void*),
    service_deferred=1;rc=-EAGAIN;goto done;
   }
   service_initial.stage=9;memset(recovered,0,sizeof(*recovered));recovered->attempted=1;
-  struct restore_actor repair={recovered,restore_allow,user,k_uptime_get()};
+  struct restore_actor repair={recovered,restore_allow,user,k_uptime_get(),0};
   rc=restore_sequence(&repair);
   if(rc&&recovered->mutated)fault=1;
   recovered->rc=rc;recovered->fault=fault;recovered->stopped=stopped;recovered->released=released;
@@ -75,19 +75,21 @@ int battery_service_read(struct bp_sample *out,int (*allow)(void*),void *user)
  if(!out||!allow||!service_ready)return -EPERM;
  memset(out,0,sizeof(*out));
  struct bp_sample s={0};struct battery_restore_result r={0};
- struct restore_actor a={&r,allow,user,k_uptime_get()};uint16_t closing;int rc;
+ struct restore_actor a={&r,allow,user,k_uptime_get(),1};uint16_t closing,current;int rc;
  /* Both flags bracket every sample. Changing ordinary CHG/OCV bits does not
   * invalidate it, but POR, CFGUPDATE, missing battery or thermal flags do. */
  if((rc=restore_read(&a,6,&s.flags))||!restore_flags_valid(s.flags,0))goto failed;
  if((rc=restore_read(&a,4,&s.mv)))goto failed;
  if((rc=restore_read(&a,0x1e,&s.temp)))goto failed;
  if((rc=restore_read(&a,0x1c,&s.soc)))goto failed;
+ if((rc=restore_read(&a,0x10,&current)))goto failed;
+ s.current_ma=(int16_t)(current<=32767U?(int32_t)current:(int32_t)current-65536);
  if((rc=restore_read(&a,6,&closing)))goto failed;
  s.flags=closing;
  if(!restore_flags_valid(closing,0))goto failed;
  if(s.mv>6000||!s.mv||s.soc>100||s.temp<2300||s.temp>3700||service_sequence==UINT32_MAX){rc=-EPERM;goto failed;}
  /* Age the complete sample from its OLDEST observation, not its last byte. */
- s.at=(uint64_t)a.begin+2000;s.flags=closing;s.valid=1;s.sequence=++service_sequence;*out=s;return 0;
+ s.at=(uint64_t)a.begin+1000;s.flags=closing;s.valid=1;s.sequence=++service_sequence;*out=s;return 0;
 failed:
  /* Retain explicit critical flags even on an incomplete sample. It is never
   * presented as valid voltage/SOC, but must not turn a thermal fault into a
